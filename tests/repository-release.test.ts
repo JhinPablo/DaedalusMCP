@@ -1,6 +1,7 @@
 import { expect, it } from "vitest";
 import { Engine } from "../src/shared/engine";
 import { emptyWorkspace } from "../src/shared/model";
+import { Service } from "../src/server/service";
 import {
   prepareRepositoryRelease,
   reportRelease,
@@ -25,6 +26,41 @@ const evidence = {
   checks: "passed" as const,
   previewUrl: "https://staging.workers.dev",
 };
+it("lets the scoped publisher discover candidates but never approve them", async () => {
+  const state = emptyWorkspace(),
+    e = new Engine(state);
+  const candidate = prepareRepositoryRelease(e, ci, input, "staging");
+  const service = new Service(
+    { read: () => state, write: () => {} },
+    { put: async () => {}, get: async () => null },
+  );
+  const publisher = { role: "publisher", id: "bootstrap-publisher" } as const;
+  const list = await service.handle(
+    new Request("https://test/api/releases"),
+    publisher,
+  );
+  expect(list.status).toBe(200);
+  expect((await list.json())[0].id).toBe(candidate.id);
+  expect(
+    (
+      await service.handle(new Request("https://test/api/releases"), {
+        role: "publisher",
+        id: "other",
+      })
+    ).status,
+  ).toBe(403);
+  expect(
+    (
+      await service.handle(
+        new Request(`https://test/api/releases/${candidate.id}/approve`, {
+          method: "POST",
+          body: JSON.stringify({ fingerprint: releaseFingerprint(candidate) }),
+        }),
+        publisher,
+      )
+    ).status,
+  ).toBe(403);
+});
 it("previews committed repository changes without inventing chats or human approvals", () => {
   const state = emptyWorkspace(),
     e = new Engine(state);

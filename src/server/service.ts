@@ -188,13 +188,22 @@ export class Service {
           apiVersion: 1,
         });
       if (method === "GET" && path === "/api/releases") {
-        if (p.role !== "owner" && p.role !== "ci")
+        const repositoryPublisher =
+          p.role === "publisher" && p.id === "bootstrap-publisher";
+        if (p.role !== "owner" && p.role !== "ci" && !repositoryPublisher)
           throw new DomainError(403, "Acceso denegado.");
         return Response.json(
-          normalizeWorkspace(this.repo.read()).releases.map((r) => ({
-            ...r,
-            fingerprint: releaseFingerprint(r),
-          })),
+          normalizeWorkspace(this.repo.read())
+            .releases.filter(
+              (r) =>
+                !repositoryPublisher ||
+                r.kind === "repository" ||
+                r.kind === "bootstrap",
+            )
+            .map((r) => ({
+              ...r,
+              fingerprint: releaseFingerprint(r),
+            })),
         );
       }
       if (method === "POST" && path === "/api/releases/repository") {
