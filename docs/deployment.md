@@ -10,6 +10,8 @@ Producción sirve `daedalus.<subdominio>.workers.dev`; staging sirve `daedalus-s
 
 ## Publicaciones
 
+La primera publicación también necesita aprobación humana: staging registra el artefacto verificado de `main` como candidato de instalación, sin inventar sesiones ni aprobaciones de ejecución. El propietario lo aprueba en **Publicaciones** del panel staging. Un publicador limitado reclama esa aprobación y despacha `First publication`, que valida nuevamente el commit y el artefacto antes de crear producción. Después de esa instalación no se pueden registrar más candidatos iniciales; los cambios normales requieren PR y revisión de agentes.
+
 Para habilitar el publicador configura `publishRepository: "JhinPablo/DaedalusMCP"` y autentica GitHub CLI con acceso a ese repositorio. Los agentes no reciben los secretos de despliegue. Después de la revisión final, el publicador verifica el remoto y los archivos privados, envía la rama y abre un PR sin copiar prompts ni conversaciones a su descripción.
 
 `CI` prueba el código de cada PR sin secretos. El workflow `Staging`, ejecutado desde `main`, solo procesa candidatos registrados de ramas `daedalus/` del mismo repositorio. Descarga su artefacto sin ejecutar código descargado en el job privilegiado. Cada candidato tiene commit, árbol Git, base, ID y digest de artefacto.

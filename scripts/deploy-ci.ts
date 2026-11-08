@@ -7,7 +7,7 @@ import type { ReleaseCandidate } from "../src/shared/model";
 const exec = promisify(execFile),
   repository = "JhinPablo/DaedalusMCP";
 const mode = process.argv[2];
-if (!["staging", "production", "rollback"].includes(mode))
+if (!["staging", "production", "rollback", "bootstrap"].includes(mode))
   throw new Error("Invalid deployment mode");
 const base = process.env.DAEDALUS_URL;
 if (!base?.startsWith("https://")) throw new Error("Falta DAEDALUS_URL");
@@ -110,6 +110,8 @@ try {
       throw new Error("The exact candidate is not approved for publication");
   }
   const r = candidate;
+  if ((mode === "bootstrap") !== (r.kind === "bootstrap"))
+    throw new Error("Deployment mode does not match candidate scope");
   if (mode === "rollback") {
     if (r.error !== "rollback-requested" || !r.previousVersion)
       throw new Error("Rollback not authorized");
@@ -151,18 +153,20 @@ try {
   const main = await gh<{ sha: string }>(`repos/${repository}/commits/main`);
   if (main.sha !== r.baseCommit)
     throw new Error("main changed; rebuild and approve a new candidate");
-  const pr = await gh<{
-    head: { sha: string; repo: { full_name: string } };
-    base: { ref: string };
-    state: string;
-  }>(`repos/${repository}/pulls/${r.prNumber}`);
-  if (
-    pr.head.sha !== r.commit ||
-    pr.head.repo.full_name !== repository ||
-    pr.base.ref !== "main" ||
-    pr.state !== "open"
-  )
-    throw new Error("PR identity changed");
+  if (mode !== "bootstrap") {
+    const pr = await gh<{
+      head: { sha: string; repo: { full_name: string } };
+      base: { ref: string };
+      state: string;
+    }>(`repos/${repository}/pulls/${r.prNumber}`);
+    if (
+      pr.head.sha !== r.commit ||
+      pr.head.repo.full_name !== repository ||
+      pr.base.ref !== "main" ||
+      pr.state !== "open"
+    )
+      throw new Error("PR identity changed");
+  }
   const commit = await gh<{ tree: { sha: string } }>(
     `repos/${repository}/git/commits/${r.commit}`,
   );
@@ -178,7 +182,7 @@ try {
   const artifact = artifacts.artifacts.find((a) => a.name === "build" && !a.expired);
   if (!artifact) throw new Error("Missing build artifact");
   if (
-    mode === "production" &&
+    (mode === "production" || mode === "bootstrap") &&
     (digest !== r.artifactDigest || String(artifact.id) !== r.artifactId)
   )
     throw new Error("Approved artifact changed");
@@ -215,10 +219,21 @@ try {
       environment === "staging"
         ? process.env.STAGING_ACCESS_AUD
         : process.env.PRODUCTION_ACCESS_AUD,
-    DAEDALUS_BOOTSTRAP_HASH: "",
-    DAEDALUS_BOOTSTRAP_EXPIRES: "",
+    DAEDALUS_BOOTSTRAP_HASH:
+      mode === "bootstrap" ? (process.env.PRODUCTION_BOOTSTRAP_HASH ?? "") : "",
+    DAEDALUS_BOOTSTRAP_EXPIRES:
+      mode === "bootstrap" ? (process.env.PRODUCTION_BOOTSTRAP_EXPIRES ?? "") : "",
   };
   let mergedCommit: string | undefined, previousVersion: string | undefined;
+  if (mode === "bootstrap") {
+    if (
+      r.commit !== r.baseCommit ||
+      !env.DAEDALUS_BOOTSTRAP_HASH ||
+      Date.parse(env.DAEDALUS_BOOTSTRAP_EXPIRES) <= Date.now() + 300000
+    )
+      throw new Error("Initial deployment configuration expired or changed");
+    mergedCommit = r.commit;
+  }
   if (mode === "production") {
     previousVersion = await currentVersion();
     const merged = await gh<{ sha: string; merged: boolean }>(

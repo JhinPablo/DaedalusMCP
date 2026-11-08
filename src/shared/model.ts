@@ -105,6 +105,7 @@ export interface Artifact {
   localPath?: string;
 }
 export interface ReleaseCandidate {
+  kind?: "agents" | "bootstrap";
   fingerprint?: string;
   id: string;
   sessionId: string;
@@ -216,7 +217,7 @@ export interface ConnectorInfo {
 export interface Credential {
   id: string;
   label: string;
-  role: "connector" | "mcp" | "ci";
+  role: "connector" | "mcp" | "ci" | "publisher";
   hash: string;
   createdAt: string;
   revokedAt?: string;
@@ -235,7 +236,7 @@ export interface Workspace {
   credentials: Credential[];
   releases: ReleaseCandidate[];
 }
-export type Role = "owner" | "connector" | "mcp" | "ci" | "migration";
+export type Role = "owner" | "connector" | "mcp" | "ci" | "migration" | "publisher";
 export interface Principal {
   role: Role;
   id: string;

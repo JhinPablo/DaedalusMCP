@@ -1,0 +1,44 @@
+name: First publication
+run-name: first-publication-${{ inputs.release_id }}
+on:
+  workflow_dispatch:
+    inputs:
+      release_id:
+        required: true
+        type: string
+permissions:
+  contents: write
+  pull-requests: write
+  actions: read
+concurrency:
+  group: daedalus-production
+  cancel-in-progress: false
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+      - run: npm ci
+      - run: npx tsx scripts/deploy-ci.ts bootstrap
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+          DAEDALUS_CI_TOKEN: ${{ secrets.STAGING_DAEDALUS_CI_TOKEN }}
+          CF_ACCESS_CLIENT_ID: ${{ secrets.STAGING_ACCESS_CLIENT_ID }}
+          CF_ACCESS_CLIENT_SECRET: ${{ secrets.STAGING_ACCESS_CLIENT_SECRET }}
+          DAEDALUS_URL: ${{ vars.STAGING_URL }}
+          STAGING_URL: ${{ vars.STAGING_URL }}
+          ACCESS_TEAM_DOMAIN: ${{ vars.ACCESS_TEAM_DOMAIN }}
+          PRODUCTION_ACCESS_AUD: ${{ vars.PRODUCTION_ACCESS_AUD }}
+          OWNER_EMAIL: ${{ secrets.OWNER_EMAIL }}
+          DAEDALUS_RELEASE_ID: ${{ inputs.release_id }}
+          PRODUCTION_BOOTSTRAP_HASH: ${{ vars.PRODUCTION_BOOTSTRAP_HASH }}
+          PRODUCTION_BOOTSTRAP_EXPIRES: ${{ vars.PRODUCTION_BOOTSTRAP_EXPIRES }}

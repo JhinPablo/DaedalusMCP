@@ -96,7 +96,7 @@ export class WorkspaceObject extends DurableObject<Env> {
         if (
           state.credentials.some(
             (c) =>
-              !["ci", "connector", "mcp"].includes(c.role) ||
+              !["ci", "connector", "mcp", "publisher"].includes(c.role) ||
               !/^[a-f0-9]{64}$/.test(c.hash),
           )
         )

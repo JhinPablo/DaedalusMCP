@@ -24,6 +24,71 @@ export const releaseResult = z.object({
   previewUrl: z.string().url(),
   error: z.string().max(2000).optional(),
 });
+export const bootstrapReleaseInput = releaseResult.extend({
+  repository: z.literal("JhinPablo/DaedalusMCP"),
+});
+export function registerBootstrap(
+  e: Engine,
+  p: Principal,
+  input: z.infer<typeof bootstrapReleaseInput>,
+  environment: string | undefined,
+  stagingUrl: string | undefined,
+  buildId: string | undefined,
+) {
+  if (p.role !== "ci" || environment !== "staging")
+    throw new DomainError(
+      403,
+      "Registro exclusivo de la primera publicación en staging.",
+    );
+  if (
+    input.commit !== input.baseCommit ||
+    input.commit !== buildId ||
+    input.checks !== "passed" ||
+    !stagingUrl ||
+    new URL(input.previewUrl).origin !== new URL(stagingUrl).origin
+  )
+    throw new DomainError(
+      409,
+      "La primera publicación requiere el commit de main probado y desplegado en staging.",
+    );
+  if (
+    e.state.releases.some((r) =>
+      ["published", "publishing", "uncertain", "rolled_back"].includes(r.status),
+    )
+  )
+    throw new DomainError(
+      409,
+      "La instalación inicial ya está publicada o requiere reconciliación.",
+    );
+  const existing = e.state.releases.find(
+    (r) =>
+      r.kind === "bootstrap" &&
+      r.commit === input.commit &&
+      r.artifactDigest === input.artifactDigest,
+  );
+  if (existing) return existing;
+  for (const r of e.state.releases) {
+    r.status = "superseded";
+    r.approval = undefined;
+  }
+  const at = new Date().toISOString();
+  const release: ReleaseCandidate = {
+    ...input,
+    id: crypto.randomUUID(),
+    kind: "bootstrap",
+    sessionId: "bootstrap",
+    branch: "main",
+    status: "ready",
+    createdAt: at,
+    updatedAt: at,
+  };
+  e.state.releases.push(release);
+  e.event(
+    "release.bootstrap_prepared",
+    "Primera publicación preparada; requiere aprobación del propietario en el panel.",
+  );
+  return release;
+}
 export function releaseFingerprint(r: ReleaseCandidate) {
   return digest(
     JSON.stringify({
@@ -33,6 +98,7 @@ export function releaseFingerprint(r: ReleaseCandidate) {
       artifactDigest: r.artifactDigest,
       artifactId: r.artifactId,
       ciRunId: r.ciRunId,
+      kind: r.kind ?? "agents",
     }),
   );
 }
@@ -41,6 +107,12 @@ export function assertReleaseConnector(
   p: Principal,
   r: ReleaseCandidate,
 ) {
+  if (
+    p.role === "publisher" &&
+    p.id === "bootstrap-publisher" &&
+    r.kind === "bootstrap"
+  )
+    return;
   if (
     p.role !== "connector" ||
     !state.projects.some(

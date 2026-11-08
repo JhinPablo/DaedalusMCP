@@ -46,7 +46,10 @@ export function Releases({
           <article className="run-card" key={r.id}>
             <div className="run-heading">
               <div>
-                <h2>{r.repository}</h2>
+                <h2>
+                  {r.kind === "bootstrap" ? "Primera publicación · " : ""}
+                  {r.repository}
+                </h2>
                 <span>
                   Commit <code>{r.commit.slice(0, 8)}</code> · base{" "}
                   <code>{r.baseCommit.slice(0, 8)}</code>
@@ -63,6 +66,13 @@ export function Releases({
                   : "pendientes"}
             </p>
             <div className="button-row">
+              <a
+                href={`https://github.com/${r.repository}/commit/${r.commit}`}
+                target="_blank"
+                rel="noreferrer"
+              >
+                Revisar commit <ExternalLink size={13} />
+              </a>
               {r.prUrl && (
                 <a href={r.prUrl} target="_blank" rel="noreferrer">
                   Revisar PR #{r.prNumber} <ExternalLink size={13} />
