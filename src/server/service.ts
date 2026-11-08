@@ -1,4 +1,6 @@
 import {
+  repositoryReleaseInput,
+  prepareRepositoryRelease,
   bootstrapReleaseInput,
   registerBootstrap,
   releaseInput,
@@ -193,6 +195,15 @@ export class Service {
             ...r,
             fingerprint: releaseFingerprint(r),
           })),
+        );
+      }
+      if (method === "POST" && path === "/api/releases/repository") {
+        const data = repositoryReleaseInput.parse(await readJson(request));
+        return Response.json(
+          this.mutate((e) =>
+            prepareRepositoryRelease(e, p, data, this.options.environment),
+          ),
+          { status: 201 },
         );
       }
       if (method === "POST" && path === "/api/releases/bootstrap") {
@@ -577,7 +588,7 @@ export class Service {
               id,
               role: "assistant",
               createdAt: new Date().toISOString(),
-              content: `**${title}**\n\nCambios guardados en la rama \`${run.branch}\`, commit \`${data.commit.slice(0, 8)}\`. [Ver cambios de esta tarea](https://github.com/JhinPablo/DaedalusMCP/commit/${data.commit}).\n\nLa preview integrada llegará al terminar el plan, la revisión y las pruebas.`,
+              content: `**${title}**\n\nCambios guardados en el worktree local, commit \`${data.commit.slice(0, 8)}\`.\n\nLa integración revisada se enviará a \`staging\`; aquí aparecerán los enlaces de cambios y preview cuando pasen las pruebas.`,
             });
           });
           return Response.json({ ok: true });

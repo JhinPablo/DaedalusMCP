@@ -54,7 +54,7 @@ export async function publishTaskProgress(
   const commit = await git(run.worktree, "rev-parse", "HEAD");
   await writeFile(file, JSON.stringify({ stage: "started", commit }));
   try {
-    await git(run.worktree, "push", "origin", `${commit}:refs/heads/${run.branch}`);
+    // Keep executor branches local; the reviewed integration advances shared staging.
     await api(`/api/runs/${run.id}/progress`, { commit });
     await writeFile(file, JSON.stringify({ stage: "finished", commit }));
   } catch (error) {
@@ -84,6 +84,7 @@ export async function publishReviews(
   releases: ReleaseCandidate[],
   api: Api,
   projects: Array<{ id: string; root: string }> = [],
+  controlEnvironment: "production" | "staging" = "production",
 ) {
   const journal = path.join(root, "..", "publisher");
   await mkdir(journal, { recursive: true });
@@ -132,7 +133,6 @@ export async function publishReviews(
       );
       if ((await git(cwd, "merge-base", base.sha, commit)) !== base.sha)
         throw new Error("La rama debe actualizarse con main y volver a verificarse.");
-      await git(cwd, "push", "origin", `HEAD:refs/heads/${review.branch}`);
       const prs = await gh<Array<{ number: number; url: string }>>(
         repository,
         [
@@ -141,7 +141,7 @@ export async function publishReviews(
           "--repo",
           repository,
           "--head",
-          review.branch,
+          "staging",
           "--json",
           "number,url",
         ],
@@ -159,11 +159,11 @@ export async function publishReviews(
             "--base",
             "main",
             "--head",
-            review.branch,
+            "staging",
             "--title",
-            "Daedalus: actualización " + commit.slice(0, 8),
+            "✨feat: deliver approved Daedalus changes " + commit.slice(0, 8),
             "--body",
-            "Cambios preparados por Daedalus. Requieren pruebas, vista previa y aprobación del propietario antes de publicarse.",
+            "Reviewed changes for the approved plan. CI, staging preview and owner approval are required before production publication.",
           ],
           { cwd, windowsHide: true },
         );
@@ -173,13 +173,16 @@ export async function publishReviews(
       const release = await api<ReleaseCandidate>("/api/releases", {
         sessionId: review.sessionId,
         repository,
-        branch: review.branch,
+        branch: "staging",
         commit,
         baseCommit: base.sha,
         tree,
         prNumber: pr.number,
         prUrl: pr.url,
       });
+      // Register before pushing so CI can associate its preview with this chat.
+      // A normal push refuses divergent staging; never replace another chat's changes.
+      await git(cwd, "push", "origin", "HEAD:refs/heads/staging");
       // CI's trusted workflow_run handler stages this candidate after the PR checks succeed.
       await writeFile(
         file,
@@ -228,6 +231,9 @@ export async function publishReviews(
           "main",
           "-f",
           "release_id=" + release.id,
+          ...(controlEnvironment === "staging"
+            ? ["-f", "control_environment=staging"]
+            : []),
         ],
         { windowsHide: true },
       );

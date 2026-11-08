@@ -6,7 +6,7 @@ const sha = z.string().regex(/^[a-f0-9]{40}$/),
 export const releaseInput = z.object({
   sessionId: z.string().uuid(),
   repository: z.literal("JhinPablo/DaedalusMCP"),
-  branch: z.string().regex(/^daedalus\/[a-zA-Z0-9_-]+$/),
+  branch: z.string().regex(/^(staging|daedalus\/[a-zA-Z0-9_-]+)$/),
   commit: sha,
   baseCommit: sha,
   tree: sha,
@@ -27,6 +27,69 @@ export const releaseResult = z.object({
 export const bootstrapReleaseInput = releaseResult.extend({
   repository: z.literal("JhinPablo/DaedalusMCP"),
 });
+export const repositoryReleaseInput = z.object({
+  repository: z.literal("JhinPablo/DaedalusMCP"),
+  branch: z.literal("staging"),
+  prNumber: z.number().int().positive().optional(),
+  prUrl: z
+    .string()
+    .regex(/^https:\/\/github\.com\/JhinPablo\/DaedalusMCP\/pull\/\d+$/)
+    .optional(),
+  commit: sha,
+  baseCommit: sha,
+  tree: sha,
+  ciRunId: z.string().regex(/^\d+$/),
+});
+export function prepareRepositoryRelease(
+  e: Engine,
+  p: Principal,
+  input: z.infer<typeof repositoryReleaseInput>,
+  environment?: string,
+) {
+  if (p.role !== "ci" || environment !== "staging")
+    throw new DomainError(
+      403,
+      "Solo CI puede preparar el preview del repositorio en staging.",
+    );
+  if (e.state.releases.some((r) => ["publishing", "uncertain"].includes(r.status)))
+    throw new DomainError(
+      409,
+      "Reconcilia la publicación anterior antes de reemplazar staging.",
+    );
+  const existing = e.state.releases.find(
+    (r) =>
+      r.kind === "repository" &&
+      r.commit === input.commit &&
+      r.baseCommit === input.baseCommit &&
+      r.tree === input.tree &&
+      r.ciRunId === input.ciRunId &&
+      ["testing", "ready", "approved"].includes(r.status),
+  );
+  if (existing) return existing;
+  for (const old of e.state.releases) {
+    if (["published", "rolled_back", "superseded", "failed"].includes(old.status))
+      continue;
+    old.status = "superseded";
+    old.approval = undefined;
+  }
+  const at = new Date().toISOString();
+  const candidate: ReleaseCandidate = {
+    ...input,
+    kind: "repository",
+    id: crypto.randomUUID(),
+    sessionId: "repository",
+    checks: "pending",
+    status: "testing",
+    createdAt: at,
+    updatedAt: at,
+  };
+  e.state.releases.push(candidate);
+  e.event(
+    "release.prepared",
+    "Commit de staging preparado; la publicación requiere aprobación del propietario.",
+  );
+  return candidate;
+}
 export function registerBootstrap(
   e: Engine,
   p: Principal,
@@ -110,7 +173,7 @@ export function assertReleaseConnector(
   if (
     p.role === "publisher" &&
     p.id === "bootstrap-publisher" &&
-    r.kind === "bootstrap"
+    (r.kind === "bootstrap" || r.kind === "repository")
   )
     return;
   if (

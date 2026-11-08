@@ -83,6 +83,44 @@ let codex = false,
   planningModel = "",
   capabilityError = "";
 let catalog: SkillEntry[] = [];
+let lastReleasePoll = 0;
+async function pollRepositoryReleases() {
+  if (
+    !config.releaseControlUrl ||
+    !config.publishRepository ||
+    Date.now() - lastReleasePoll < 60000
+  )
+    return;
+  lastReleasePoll = Date.now();
+  const publisherToken = process.env.DAEDALUS_PUBLISHER_TOKEN;
+  if (!publisherToken)
+    throw new Error("Falta la credencial del publicador de staging.");
+  const releaseApi = async <T = unknown>(route: string, body?: unknown): Promise<T> => {
+    const response = await fetch(config.releaseControlUrl!.replace(/\/$/, "") + route, {
+      method: body === undefined ? "GET" : "POST",
+      headers: {
+        Authorization: "Bearer " + publisherToken,
+        "Content-Type": "application/json",
+        "CF-Access-Client-Id": process.env.STAGING_ACCESS_CLIENT_ID ?? "",
+        "CF-Access-Client-Secret": process.env.STAGING_ACCESS_CLIENT_SECRET ?? "",
+      },
+      body: body === undefined ? undefined : JSON.stringify(body),
+      signal: AbortSignal.timeout(15000),
+    });
+    if (!response.ok) throw new Error("Publicador staging: " + response.status);
+    return response.json() as Promise<T>;
+  };
+  const releases = await releaseApi<ReleaseCandidate[]>("/api/releases");
+  await publishReviews(
+    config.publishRepository,
+    path.join(root, "repository-releases"),
+    [],
+    releases.filter((r) => r.kind === "repository"),
+    releaseApi,
+    [],
+    "staging",
+  );
+}
 async function probe() {
   const errors: string[] = [];
   luna = false;
@@ -525,6 +563,7 @@ while (!stopping) {
       void execute(control.run, control.relatedRuns).catch((e) =>
         log("Fallo del conector: " + String(e)),
       );
+    if (!active.size && !draining) await pollRepositoryReleases();
     if (!active.size && !draining && config.publishRepository)
       await publishReviews(
         config.publishRepository,
