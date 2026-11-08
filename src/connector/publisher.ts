@@ -133,6 +133,9 @@ export async function publishReviews(
       );
       if ((await git(cwd, "merge-base", base.sha, commit)) !== base.sha)
         throw new Error("La rama debe actualizarse con main y volver a verificarse.");
+      // The branch must contain the reviewed commit before GitHub can open its PR.
+      // A normal push refuses divergent staging; never replace another chat's changes.
+      await git(cwd, "push", "origin", "HEAD:refs/heads/staging");
       const prs = await gh<Array<{ number: number; url: string }>>(
         repository,
         [
@@ -180,9 +183,6 @@ export async function publishReviews(
         prNumber: pr.number,
         prUrl: pr.url,
       });
-      // Register before pushing so CI can associate its preview with this chat.
-      // A normal push refuses divergent staging; never replace another chat's changes.
-      await git(cwd, "push", "origin", "HEAD:refs/heads/staging");
       // CI's trusted workflow_run handler stages this candidate after the PR checks succeed.
       await writeFile(
         file,
