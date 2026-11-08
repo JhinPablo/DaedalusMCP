@@ -2,6 +2,30 @@
 .chat-app {
   min-height: 0;
 }
+.chat-app .topbar {
+  height: 48px;
+  min-height: 48px;
+}
+.nav-link.nav-suboption {
+  padding-left: 32px;
+  font-size: 12px;
+}
+.chat-sheet .view-label {
+  min-width: 0;
+  flex: 1;
+}
+.chat-sheet .view-label h1 {
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.4;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+.chat-sheet .toolbar-actions {
+  flex-shrink: 0;
+}
 .chat-sheet {
   overflow: hidden;
 }
@@ -33,8 +57,8 @@
   border-color: var(--control);
 }
 .chat-sheet .workshop-toolbar {
-  padding: 7px 22px;
-  min-height: 48px;
+  padding: 4px 16px;
+  min-height: 42px;
   gap: 12px;
 }
 .chat-sheet .toolbar-actions {

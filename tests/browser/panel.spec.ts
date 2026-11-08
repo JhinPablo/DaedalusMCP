@@ -1,6 +1,68 @@
 import { expect, test } from "@playwright/test";
 import { emptyWorkspace, type AgentRun } from "../../src/shared/model";
 import { Engine } from "../../src/shared/engine";
+test("configuración compacta y nuevo chat dentro de la navegación", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/");
+  await expect(page.getByLabel("Tu petición", { exact: true })).toBeVisible();
+  await expect(page.locator("main .page-heading")).toHaveCount(0);
+  await expect(page.locator("main .browser-notifications")).toHaveCount(0);
+  const log = await page.getByLabel("Mensajes de la conversación").boundingBox();
+  expect(log!.y).toBeLessThan(110);
+  const entry = page
+    .locator("nav .nav-entry")
+    .filter({ has: page.getByRole("button", { name: "Chats", exact: true }) });
+  await expect(
+    entry.getByRole("button", { name: "Nuevo chat", exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Nuevo chat", exact: true }),
+  ).toHaveCount(1);
+  await page
+    .getByLabel("Tu petición", { exact: true })
+    .fill("Un borrador antes de abrir los ajustes");
+  for (const [width, height] of [
+    [1440, 900],
+    [390, 600],
+  ]) {
+    await page.setViewportSize({ width, height });
+    await page.getByLabel("Configuración", { exact: true }).click();
+    const settings = page.getByRole("region", { name: "Configuración del taller" });
+    await expect(settings).toBeVisible();
+    await expect(
+      settings.getByRole("combobox", { name: "Tema", exact: true }),
+    ).toBeVisible();
+    await expect(
+      settings.getByRole("button", { name: /Activar notificaciones|Pausar avisos/ }),
+    ).toBeVisible();
+    const box = await settings.boundingBox();
+    expect(box!.x).toBeGreaterThanOrEqual(0);
+    expect(box!.x + box!.width).toBeLessThanOrEqual(width);
+    expect(box!.y + box!.height).toBeLessThanOrEqual(height);
+    if (width === 1440)
+      await page.screenshot({
+        path: ".daedalus/qa/settings-desktop.png",
+        fullPage: true,
+      });
+    await page.keyboard.press("Escape");
+    await expect(settings).toBeHidden();
+    await expect(page.getByLabel("Tu petición", { exact: true })).toHaveValue(
+      "Un borrador antes de abrir los ajustes",
+    );
+    if (width === 390) {
+      await page.getByLabel("Abrir navegación").click();
+      await entry.getByRole("button", { name: "Nuevo chat", exact: true }).click();
+      await expect(page.getByLabel("Tu petición", { exact: true })).toBeEmpty();
+      await expect(page.getByLabel("Tu petición", { exact: true })).toBeFocused();
+      await page.screenshot({
+        path: ".daedalus/qa/chat-compact-mobile.png",
+        fullPage: true,
+      });
+    }
+  }
+});
 test("el editor aprovecha el ancho y el contexto se adapta sin perder el borrador", async ({
   page,
 }) => {
@@ -74,7 +136,7 @@ test("chat persistente, contexto secundario y publicaciones", async ({ page }) =
   await expect(page.getByLabel("Contexto de la conversación")).toHaveCount(0);
   await page.getByRole("button", { name: "Publicaciones", exact: true }).click();
   await expect(page.getByText("Todavía no hay candidatos")).toBeVisible();
-  await page.getByRole("button", { name: "Chat", exact: true }).click();
+  await page.getByRole("button", { name: "Chats", exact: true }).click();
   await page.setViewportSize({ width: 390, height: 844 });
   await expect(page.getByLabel("Enviar petición")).toBeVisible();
   expect(
@@ -116,15 +178,15 @@ test("fondos Remotion día/noche, preferencias de vidrio y accesibilidad", async
   const fontsBefore = await page
     .getByRole("heading", { name: "Habla con Daedalus" })
     .evaluate((el) => getComputedStyle(el).fontFamily);
-  await page.getByLabel("Apariencia", { exact: true }).click();
+  await page.getByLabel("Configuración", { exact: true }).click();
   await page
     .getByLabel("Intensidad del vidrio en modo claro", { exact: true })
     .fill("0.4");
   await page.getByLabel("Animar fondo", { exact: true }).uncheck();
   await expect(background).toHaveAttribute("data-motion", "paused");
-  await page.getByLabel("Apariencia", { exact: true }).click();
+  await page.getByLabel("Configuración", { exact: true }).click();
   await page.screenshot({ path: ".daedalus/qa/workshop-day.png", fullPage: true });
-  await page.getByLabel("Apariencia", { exact: true }).click();
+  await page.getByLabel("Configuración", { exact: true }).click();
   await page.getByRole("combobox", { name: "Tema", exact: true }).selectOption("dark");
   await page
     .getByLabel("Intensidad del vidrio en modo oscuro", { exact: true })
@@ -138,12 +200,12 @@ test("fondos Remotion día/noche, preferencias de vidrio y accesibilidad", async
   expect((await page.request.get("/backgrounds/workshop-night.png")).status()).toBe(
     200,
   );
-  await page.getByLabel("Apariencia", { exact: true }).click();
+  await page.getByLabel("Configuración", { exact: true }).click();
   await page.screenshot({ path: ".daedalus/qa/workshop-night.png", fullPage: true });
   await page.reload();
   await expect(background).toHaveAttribute("data-theme", "dark");
   await expect(background).toHaveAttribute("data-motion", "paused");
-  await page.getByLabel("Apariencia", { exact: true }).click();
+  await page.getByLabel("Configuración", { exact: true }).click();
   await expect(
     page.getByLabel("Intensidad del vidrio en modo claro", { exact: true }),
   ).toHaveValue("0.4");
@@ -159,7 +221,7 @@ test("fondos Remotion día/noche, preferencias de vidrio y accesibilidad", async
     )
     .toBe("none");
   await expect(page.getByLabel("Animar fondo", { exact: true })).toBeDisabled();
-  await page.getByLabel("Apariencia", { exact: true }).click();
+  await page.getByLabel("Configuración", { exact: true }).click();
   await page.setViewportSize({ width: 390, height: 844 });
   await expect(page.getByLabel("Enviar petición")).toBeVisible();
   expect(
@@ -235,7 +297,15 @@ test("permisos legibles, enlaces de entrega y avisos sin duplicados", async ({
       () => (window as unknown as { __notices: unknown[] }).__notices.length,
     ),
   ).toBe(0);
+  await expect(
+    page.getByRole("button", { name: "Activar notificaciones" }),
+  ).toBeHidden();
+  await page.getByLabel("Configuración", { exact: true }).click();
   await page.getByRole("button", { name: "Activar notificaciones" }).click();
+  await page.keyboard.press("Escape");
+  await expect(
+    page.getByRole("region", { name: "Configuración del taller" }),
+  ).toBeHidden();
   const run = {
     id: "run",
     sessionId: session.id,

@@ -307,7 +307,7 @@ export function App() {
         <nav aria-label="Navegación principal">
           {(
             [
-              ["workshop", MessageSquare, "Chat"],
+              ["workshop", MessageSquare, "Chats"],
               ["releases", ArrowDownToLine, "Publicaciones"],
               ["execution", Workflow, "Ejecución"],
               ["console", Terminal, "Consola"],
@@ -315,17 +315,24 @@ export function App() {
               ["connections", Link2, "Conexiones"],
             ] as const
           ).map(([key, Icon, label]) => (
-            <button
-              className={"nav-link " + (page === key ? "active" : "")}
-              key={key}
-              onClick={() => nav(key)}
-            >
-              <Icon size={17} />
-              {label}
-              {key === "execution" && pending.length > 0 && (
-                <span className="nav-count">{pending.length}</span>
+            <div className="nav-entry" key={key}>
+              <button
+                className={"nav-link " + (page === key ? "active" : "")}
+                onClick={() => nav(key)}
+              >
+                <Icon size={17} />
+                {label}
+                {key === "execution" && pending.length > 0 && (
+                  <span className="nav-count">{pending.length}</span>
+                )}
+              </button>
+              {key === "workshop" && (
+                <button className="nav-link nav-suboption" onClick={startChat}>
+                  <Plus size={15} />
+                  Nuevo chat
+                </button>
               )}
-            </button>
+            </div>
           ))}
         </nav>
         <div className="session-heading">
@@ -361,10 +368,6 @@ export function App() {
             <p className="subtle">Tu próxima idea empieza aquí.</p>
           )}
         </div>
-        <button className="new-session" onClick={startChat}>
-          <Plus size={16} />
-          Nuevo chat<span>↗</span>
-        </button>
         <div className="sidebar-bottom">
           <button className="connection-summary" onClick={() => nav("connections")}>
             <span className={"status-dot " + (anyOnline ? "online" : "")} />
@@ -400,7 +403,18 @@ export function App() {
             </span>
           </div>
           <div className="topbar-right">
-            <Appearance />
+            <Appearance>
+              <BrowserNotifications
+                state={state}
+                openSession={(id) => {
+                  if (!state?.sessions.some((s) => s.id === id)) return;
+                  setSessionId(id);
+                  setNewChat(false);
+                  setPage("workshop");
+                  setSupportPanel("activity");
+                }}
+              />
+            </Appearance>
             <ShieldCheck size={15} />
             <span>Aprobación humana</span>
             <button
@@ -415,16 +429,6 @@ export function App() {
         </header>
         <main className={"sheet " + (page === "workshop" ? "chat-sheet" : "")}>
           <PreviewIdentity deployedBuildId={deployedBuildId} />
-          <BrowserNotifications
-            state={state}
-            openSession={(id) => {
-              if (!state?.sessions.some((s) => s.id === id)) return;
-              setSessionId(id);
-              setNewChat(false);
-              setPage("workshop");
-              setSupportPanel("activity");
-            }}
-          />
           {updateAvailable && (
             <div className="notice" role="status">
               Hay una nueva versión de Daedalus. Tu borrador está guardado.
@@ -452,12 +456,11 @@ export function App() {
             </div>
           ) : (
             <>
-              <div className="page-heading">
-                <div>
-                  <div className="eyebrow">
-                    {page === "workshop"
-                      ? "Pensar antes de construir"
-                      : page === "releases"
+              {page !== "workshop" && (
+                <div className="page-heading">
+                  <div>
+                    <div className="eyebrow">
+                      {page === "releases"
                         ? "Publicaciones"
                         : page === "execution"
                           ? "Del plan al resultado"
@@ -466,11 +469,9 @@ export function App() {
                             : page === "console"
                               ? "Registro de actividad"
                               : "Tu estación de trabajo"}
-                  </div>
-                  <h1>
-                    {page === "workshop"
-                      ? (session?.title ?? "Nuevo chat")
-                      : page === "releases"
+                    </div>
+                    <h1>
+                      {page === "releases"
                         ? "Publicaciones"
                         : page === "execution"
                           ? "Ejecución"
@@ -479,40 +480,33 @@ export function App() {
                             : page === "skills"
                               ? "Biblioteca de skills"
                               : "Conexiones"}
-                  </h1>
-                  <p>
-                    {page === "workshop"
-                      ? "Conversa, mejora tu idea y dirige a tus agentes."
-                      : page === "execution"
+                    </h1>
+                    <p>
+                      {page === "execution"
                         ? "Tareas, permisos y evidencia del trabajo aprobado."
                         : page === "skills"
                           ? "Cada especialidad tiene un lugar en el proceso."
                           : page === "console"
                             ? "Lo que ocurrió, en el orden en que ocurrió."
                             : "El panel coordina. Tu equipo conserva las credenciales y ejecuta."}
-                  </p>
+                    </p>
+                  </div>
+                  <div className="heading-actions">
+                    {session && page === "execution" && (
+                      <span className={"phase phase-" + session.phase}>
+                        <span className="status-dot" />
+                        {phases[session.phase]}
+                      </span>
+                    )}
+                  </div>
                 </div>
-                <div className="heading-actions">
-                  {session && ["workshop", "execution"].includes(page) && (
-                    <span className={"phase phase-" + session.phase}>
-                      <span className="status-dot" />
-                      {phases[session.phase]}
-                    </span>
-                  )}
-                  {page === "workshop" && (
-                    <button className="primary" onClick={startChat}>
-                      <Plus size={15} />
-                      Nuevo chat
-                    </button>
-                  )}
-                </div>
-              </div>
+              )}
               {page === "workshop" && (
                 <>
                   <div className="workshop-toolbar">
                     <div className="view-label">
                       <MessageSquare size={15} />
-                      Conversación
+                      <h1 title={session?.title}>{session?.title ?? "Conversación"}</h1>
                       {session && (
                         <span className="subtle">{session.nodes.length} nodos</span>
                       )}
