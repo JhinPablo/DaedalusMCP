@@ -1,0 +1,45 @@
+{
+  "schemaVersion": 1,
+  "sources": [
+    {
+      "id": "superpowers",
+      "name": "Superpowers",
+      "repository": "https://github.com/obra/superpowers",
+      "revision": "22f0b463e7a5e579904dd6211a520321035526f7",
+      "licenseFiles": ["LICENSE"],
+      "purpose": "Brainstorming, planificación y revisión del trabajo."
+    },
+    {
+      "id": "taste",
+      "name": "Taste Skill",
+      "repository": "https://github.com/Leonxlnx/taste-skill",
+      "revision": "9b4bf937a1f69348126959c15d2f99a73e65699b",
+      "licenseFiles": ["LICENSE"],
+      "purpose": "Dirección de diseño e interfaces con intención."
+    },
+    {
+      "id": "remotion",
+      "name": "Remotion Skills",
+      "repository": "https://github.com/remotion-dev/skills",
+      "revision": "a2824c67f8b4585c294a8101db9f9f0ad3c643f8",
+      "licenseFiles": ["LICENSE"],
+      "purpose": "Video, composición y animación programática."
+    },
+    {
+      "id": "benjitaylor",
+      "name": "Benji Taylor · Stageshow",
+      "repository": "https://github.com/benjitaylor/skills",
+      "revision": "299140fafd08df55a9c234e610c3f64af3f45531",
+      "licenseFiles": ["stageshow/LICENSE"],
+      "purpose": "Interfaces de producto y demostraciones visuales."
+    },
+    {
+      "id": "impeccable",
+      "name": "Impeccable",
+      "repository": "https://github.com/pbakaus/impeccable",
+      "revision": "687bc381bc9091bf252c0a05303640561014a425",
+      "licenseFiles": ["LICENSE", "NOTICE.md"],
+      "purpose": "Crítica, auditoría y refinamiento del diseño."
+    }
+  ]
+}

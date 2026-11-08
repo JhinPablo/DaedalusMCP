@@ -1,0 +1,16 @@
+node_modules/
+dist/
+.daedalus/
+.env*
+!.env.example
+connector.local.json
+coverage/
+*.log
+.cf/
+.cloudflare/
+.wrangler/
+.taste-skill/inspect/
+.taste-skill/chat-before/
+.taste-skill/chat-after/
+.taste-skill/*
+!.taste-skill/direction.json

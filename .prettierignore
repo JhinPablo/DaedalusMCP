@@ -1,0 +1,6 @@
+node_modules/
+dist/
+.daedalus/
+.cloudflare/
+.taste-skill/
+package-lock.json

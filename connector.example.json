@@ -1,0 +1,19 @@
+{
+  "serverUrl": "http://127.0.0.1:8787",
+  "name": "Mi estación de trabajo",
+  "tokenEnv": "DAEDALUS_CONNECTOR_TOKEN",
+  "codexCommand": "codex",
+  "opencodeUrl": "http://127.0.0.1:4096",
+  "opencodeModel": "deepseek-v4.1-flash-free",
+  "planningFallback": "none",
+  "projects": [
+    {
+      "id": "mi-proyecto",
+      "name": "Mi proyecto",
+      "root": "C:/ruta/a/mi-proyecto"
+    }
+  ],
+  "skillsRoot": ".daedalus/skills",
+  "journalRoot": ".daedalus/connector",
+  "maxParallel": 3
+}
