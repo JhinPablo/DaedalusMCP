@@ -1,6 +1,63 @@
 import { expect, test } from "@playwright/test";
 import { emptyWorkspace, type AgentRun } from "../../src/shared/model";
 import { Engine } from "../../src/shared/engine";
+test("el editor aprovecha el ancho y el contexto se adapta sin perder el borrador", async ({
+  page,
+}) => {
+  const cdp = await page.context().newCDPSession(page);
+  await cdp.send("Emulation.setEmulatedMedia", {
+    features: [
+      { name: "prefers-color-scheme", value: "dark" },
+      { name: "prefers-reduced-motion", value: "reduce" },
+      { name: "prefers-reduced-transparency", value: "no-preference" },
+    ],
+  });
+  await page.goto("/");
+  await page
+    .getByLabel("Tu petición", { exact: true })
+    .fill("Este borrador permanece al abrir el contexto.");
+  await expect(page.locator(".app-footer")).toHaveCount(0);
+  await expect(page.getByText("Ingenio, con intención.")).toHaveCount(0);
+  for (const [width, height] of [
+    [1920, 900],
+    [1440, 900],
+    [1100, 800],
+    [768, 900],
+    [390, 844],
+    [1280, 600],
+  ]) {
+    await page.setViewportSize({ width, height });
+    const chat = await page.locator(".conversation-main").boundingBox();
+    const composer = await page.locator(".conversation-main .composer").boundingBox();
+    expect(composer!.width / chat!.width).toBeGreaterThan(0.94);
+    expect(composer!.height).toBeLessThan(250);
+    expect(composer!.y + composer!.height).toBeLessThanOrEqual(height);
+    if (width === 1920)
+      await page.screenshot({ path: ".daedalus/qa/chat-wide.png", fullPage: true });
+    await page.getByLabel("Ver flujo de ideas").click();
+    const panel = page.getByLabel("Contexto de la conversación");
+    await expect(panel).toBeVisible();
+    const context = await panel.boundingBox();
+    expect(context!.x + context!.width).toBeLessThanOrEqual(width);
+    if (width > 900) {
+      await expect(page.getByLabel("Tu petición", { exact: true })).toBeVisible();
+      const remaining = await page.locator(".conversation-main").boundingBox();
+      const editor = await page.locator(".conversation-main .composer").boundingBox();
+      expect(remaining!.width).toBeGreaterThan(320);
+      expect(editor!.width / remaining!.width).toBeGreaterThan(0.92);
+      expect(editor!.x + editor!.width).toBeLessThanOrEqual(context!.x);
+    } else await expect(page.getByLabel("Cerrar contexto")).toBeVisible();
+    if (width === 1440)
+      await page.screenshot({ path: ".daedalus/qa/chat-context.png", fullPage: true });
+    await page.getByLabel("Cerrar contexto").click();
+    await expect(page.getByLabel("Tu petición", { exact: true })).toHaveValue(
+      "Este borrador permanece al abrir el contexto.",
+    );
+    expect(
+      await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth),
+    ).toBe(true);
+  }
+});
 test("chat persistente, contexto secundario y publicaciones", async ({ page }) => {
   await page.goto("/");
   await expect(page.getByLabel("Enviar petición")).toBeVisible();

@@ -406,6 +406,7 @@ export function App() {
             <button
               className="icon-button"
               aria-label="Actualizar estado"
+              title={error ? "Sin conexión con el servidor" : "Estado sincronizado"}
               onClick={() => void refresh()}
             >
               <RefreshCw size={15} />
@@ -816,10 +817,6 @@ export function App() {
                           </button>
                         )}
                       </form>
-                      <p className="composer-note">
-                        <ShieldCheck size={13} /> Tú apruebas el plan antes de que Codex
-                        ejecute cambios.
-                      </p>
                     </section>
                     {supportPanel && (
                       <aside
@@ -1367,13 +1364,6 @@ export function App() {
             </>
           )}
         </main>
-        <footer className="app-footer">
-          <span>Ingenio, con intención.</span>
-          <span>
-            <span className={"status-dot " + (error ? "" : "online")} />
-            {error ? "Sin conexión con el servidor" : "Estado sincronizado"}
-          </span>
-        </footer>
       </div>
       {modal && state && (
         <Modal
