@@ -211,7 +211,17 @@ export class CodexClient {
             ? "Realiza una revisión independiente de solo lectura. Diferencia las pruebas observadas de las afirmaciones del ejecutor."
             : `El propietario ya aprobó el enfoque y la ejecución del plan v${authorization!.version}, digest ${authorization!.digest}. La aprobación pendiente mencionada en el borrador ya se obtuvo. Ejecuta únicamente la tarea asignada; no vuelvas a entregar un plan en lugar de implementarla. Daedalus creará los commits de integración locales al terminar; no hagas push. Si no puedes completar la tarea, devuelve status blocked o failed en tu resultado estructurado. No declares completed si solo has descrito pasos o si las verificaciones fallan.`,
       },
-    );
+    ).catch((error: unknown) => {
+      if (
+        planning?.threadId &&
+        error instanceof Error &&
+        error.message.includes("active writer")
+      )
+        throw new Error(
+          "Otro proceso de Codex tiene abierta esta conversación. Libérala allí y vuelve a enviar tu petición. Daedalus conserva el mismo chat y no crea uno duplicado.",
+        );
+      throw error;
+    });
     const threadId = thread.thread.id;
     if (planning?.threadId && threadId !== planning.threadId)
       throw new Error("Codex devolvió otra conversación al reanudar la planificación.");

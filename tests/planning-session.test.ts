@@ -66,31 +66,37 @@ it("does not continue or replace a conversation with an uncertain turn", () => {
     ),
   ).toThrow("reconciliación");
 });
-it("passes the persistent thread to Luna and never falls back to creating a replacement thread on resume failure", async () => {
-  const client = Object.create(CodexClient.prototype) as CodexClient;
-  client.initialize = vi.fn().mockResolvedValue(undefined);
-  client.account = vi.fn().mockResolvedValue({ type: "chatgpt" });
-  client.requireLunaHigh = vi.fn().mockResolvedValue(undefined);
-  const request = vi.fn().mockRejectedValue(new Error("Resume unavailable"));
-  client.request = request;
-  await expect(
-    planWithLuna(
-      client,
-      "Continue",
-      process.cwd(),
-      new AbortController().signal,
-      async () => {},
-      "thread-1",
-    ),
-  ).rejects.toThrow("Resume unavailable");
-  expect(request).toHaveBeenCalledTimes(1);
-  expect(request).toHaveBeenCalledWith(
-    "thread/resume",
-    expect.objectContaining({
-      threadId: "thread-1",
-      sandbox: "read-only",
-      model: "gpt-6-luna",
-      modelProvider: "openai",
-    }),
-  );
-});
+it.each([
+  ["Resume unavailable", "Resume unavailable"],
+  ["thread thread-1 already has an active writer", "Daedalus conserva el mismo chat"],
+])(
+  "does not replace the planning chat when resume fails: %s",
+  async (error, expected) => {
+    const client = Object.create(CodexClient.prototype) as CodexClient;
+    client.initialize = vi.fn().mockResolvedValue(undefined);
+    client.account = vi.fn().mockResolvedValue({ type: "chatgpt" });
+    client.requireLunaHigh = vi.fn().mockResolvedValue(undefined);
+    const request = vi.fn().mockRejectedValue(new Error(error));
+    client.request = request;
+    await expect(
+      planWithLuna(
+        client,
+        "Continue",
+        process.cwd(),
+        new AbortController().signal,
+        async () => {},
+        "thread-1",
+      ),
+    ).rejects.toThrow(expected);
+    expect(request).toHaveBeenCalledTimes(1);
+    expect(request).toHaveBeenCalledWith(
+      "thread/resume",
+      expect.objectContaining({
+        threadId: "thread-1",
+        sandbox: "read-only",
+        model: "gpt-6-luna",
+        modelProvider: "openai",
+      }),
+    );
+  },
+);
