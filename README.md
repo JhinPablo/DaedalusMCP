@@ -91,13 +91,13 @@ El primer acceso del propietario permite crear las credenciales de Daedalus desd
 
 ## Previews, avances y avisos
 
-El escenario de Daedalus utiliza Remotion para animar luz, sombras y reflejos, con recursos diurno/nocturno del mismo encuadre. En Apariencia puedes cambiar el tema, guardar intensidad de vidrio por modo y pausar el fondo. La animación se pausa al ocultar la pestaña y respeta las preferencias de accesibilidad. Consulta [superficies, fallbacks y procedencia](docs/visual-material.md).
+El escenario de Daedalus utiliza Remotion para animar luz, sombras y reflejos, con recursos diurno/nocturno del mismo encuadre. En Configuración → Apariencia puedes cambiar el tema, guardar intensidad de vidrio por modo y pausar el fondo. La animación se pausa al ocultar la pestaña y respeta las preferencias de accesibilidad. Consulta [superficies, fallbacks y procedencia](docs/visual-material.md).
 
 Con `publishRepository` configurado, cada tarea completada publica su commit en su rama `daedalus/…` y añade un enlace a los cambios en el chat. El publicador comprueba el remoto y excluye archivos privados. Un intento de resultado incierto se conserva en su journal y se revisa antes de repetirlo.
 
 Al terminar el plan y la revisión, se prepara el PR. CI verifica el candidato y despliega el artefacto en el staging privado. El chat recibe los enlaces al diff y a la preview únicamente después de comprobar el despliegue. Staging es un entorno compartido, no una rama: su enlace incluye el commit esperado y avisa cuando otro candidato lo reemplaza. Producción requiere aprobación del propietario.
 
-«Activar notificaciones» solicita permiso al navegador mediante una acción del usuario. Avisa de permisos pendientes, finalización, fallos y previews listas; al pulsar el aviso abre el chat correspondiente. No muestra comandos ni conversaciones en el aviso. Las preferencias y la deduplicación se guardan por navegador y entorno. Se requiere mantener Daedalus abierto; no se implementa Web Push con el navegador cerrado. En iPhone/iPad, se utiliza desde la pantalla de inicio.
+En Configuración → Notificaciones, «Activar notificaciones» solicita permiso al navegador mediante una acción del usuario. Avisa de permisos pendientes, finalización, fallos y previews listas; al pulsar el aviso abre el chat correspondiente. No muestra comandos ni conversaciones en el aviso. Las preferencias y la deduplicación se guardan por navegador y entorno. Se requiere mantener Daedalus abierto; no se implementa Web Push con el navegador cerrado. En iPhone/iPad, se utiliza desde la pantalla de inicio.
 
 Las solicitudes de permiso muestran motivo, comando, carpeta y alcance en campos legibles. El JSON completo sigue disponible como detalle técnico y la decisión conserva las mismas reglas de autorización.
 
