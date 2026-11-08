@@ -41,6 +41,7 @@ export async function planWithLuna(
   directory: string,
   signal: AbortSignal,
   onSession: (id: string) => Promise<void>,
+  threadId?: string,
 ): Promise<PlanningResult> {
   const output = await client.execute(
     prompt,
@@ -50,6 +51,7 @@ export async function planWithLuna(
     onSession,
     undefined,
     {
+      threadId,
       model: lunaModel,
       effort: lunaEffort,
       instructions:

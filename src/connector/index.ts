@@ -5,6 +5,7 @@ import { loadConfig } from "./config";
 import { CodexClient } from "./codex";
 import { OpenCodeClient } from "./opencode";
 import { planWithFallback, planWithLuna } from "./planning";
+import { loadPlanningSession, isRunJournalFile } from "./planning-session";
 import { Worktrees } from "./worktrees";
 import { projectContext } from "./context";
 import { taskReport, ExecutionOutcomeError } from "./outcome";
@@ -82,6 +83,44 @@ let codex = false,
   planningModel = "",
   capabilityError = "";
 let catalog: SkillEntry[] = [];
+let lastReleasePoll = 0;
+async function pollRepositoryReleases() {
+  if (
+    !config.releaseControlUrl ||
+    !config.publishRepository ||
+    Date.now() - lastReleasePoll < 60000
+  )
+    return;
+  lastReleasePoll = Date.now();
+  const publisherToken = process.env.DAEDALUS_PUBLISHER_TOKEN;
+  if (!publisherToken)
+    throw new Error("Falta la credencial del publicador de staging.");
+  const releaseApi = async <T = unknown>(route: string, body?: unknown): Promise<T> => {
+    const response = await fetch(config.releaseControlUrl!.replace(/\/$/, "") + route, {
+      method: body === undefined ? "GET" : "POST",
+      headers: {
+        Authorization: "Bearer " + publisherToken,
+        "Content-Type": "application/json",
+        "CF-Access-Client-Id": process.env.STAGING_ACCESS_CLIENT_ID ?? "",
+        "CF-Access-Client-Secret": process.env.STAGING_ACCESS_CLIENT_SECRET ?? "",
+      },
+      body: body === undefined ? undefined : JSON.stringify(body),
+      signal: AbortSignal.timeout(15000),
+    });
+    if (!response.ok) throw new Error("Publicador staging: " + response.status);
+    return response.json() as Promise<T>;
+  };
+  const releases = await releaseApi<ReleaseCandidate[]>("/api/releases");
+  await publishReviews(
+    config.publishRepository,
+    path.join(root, "repository-releases"),
+    [],
+    releases.filter((r) => r.kind === "repository"),
+    releaseApi,
+    [],
+    "staging",
+  );
+}
 async function probe() {
   const errors: string[] = [];
   luna = false;
@@ -242,12 +281,21 @@ async function execute(run: AgentRun, relatedRuns: AgentRun[]) {
       run.externalSessionId = externalSessionId;
       await save(journal);
       await api("/api/runs/" + run.id + "/event", {
-        message: "Sesión local iniciada.",
+        message: "Conversación local conectada.",
         externalSessionId,
         model: run.model,
       });
     };
     if (run.kind === "planning") {
+      const deepseekSession = await loadPlanningSession(
+        root,
+        run,
+        "OpenCode · DeepSeek V4.1 Flash Free",
+      );
+      const lunaSession =
+        config.planningFallback === "luna-high"
+          ? await loadPlanningSession(root, run, "GPT-6 Luna · alto")
+          : undefined;
       run.model = "OpenCode · DeepSeek V4.1 Flash Free";
       const planningPrompt =
         run.prompt +
@@ -258,7 +306,14 @@ async function execute(run: AgentRun, relatedRuns: AgentRun[]) {
         "\n\n" +
         skills;
       const result = await planWithFallback(
-        () => openCode.plan(planningPrompt, project.root, controller.signal, onSession),
+        () =>
+          openCode.plan(
+            planningPrompt,
+            project.root,
+            controller.signal,
+            onSession,
+            deepseekSession,
+          ),
         config.planningFallback === "luna-high"
           ? async () => {
               client = new CodexClient(config.codexCommand, project.root, async () => ({
@@ -270,12 +325,14 @@ async function execute(run: AgentRun, relatedRuns: AgentRun[]) {
                 project.root,
                 controller.signal,
                 onSession,
+                lunaSession,
               );
             }
           : undefined,
         controller.signal,
         async (reason) => {
           run.model = "GPT-6 Luna · alto";
+          run.externalSessionId = undefined;
           planningModel = "gpt-6-luna · alto";
           try {
             await openCode.available();
@@ -432,7 +489,7 @@ async function execute(run: AgentRun, relatedRuns: AgentRun[]) {
   }
 }
 async function reconcile() {
-  for (const name of (await readdir(root)).filter((n) => n.endsWith(".json"))) {
+  for (const name of (await readdir(root)).filter(isRunJournalFile)) {
     const j = JSON.parse(await readFile(path.join(root, name), "utf8")) as Journal;
     if (active.has(j.run.id)) continue;
     if (j.stage === "started") {
@@ -506,6 +563,7 @@ while (!stopping) {
       void execute(control.run, control.relatedRuns).catch((e) =>
         log("Fallo del conector: " + String(e)),
       );
+    if (!active.size && !draining) await pollRepositoryReleases();
     if (!active.size && !draining && config.publishRepository)
       await publishReviews(
         config.publishRepository,

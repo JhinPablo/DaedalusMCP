@@ -105,7 +105,7 @@ export interface Artifact {
   localPath?: string;
 }
 export interface ReleaseCandidate {
-  kind?: "agents" | "bootstrap";
+  kind?: "agents" | "bootstrap" | "repository";
   fingerprint?: string;
   id: string;
   sessionId: string;

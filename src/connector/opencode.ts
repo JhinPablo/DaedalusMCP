@@ -166,19 +166,22 @@ export class OpenCodeClient {
     directory: string,
     signal: AbortSignal,
     onSession: (id: string) => Promise<void>,
+    sessionId?: string,
   ): Promise<{ proposal?: Proposal; reply?: string; output: string }> {
     await this.available();
     const monitor = new AbortController();
     signal = AbortSignal.any([signal, monitor.signal, AbortSignal.timeout(180000)]);
     const query = "?directory=" + encodeURIComponent(directory);
-    const session = await this.call<{ id: string }>(
-      "/session" + query,
-      {
-        title: "Daedalus · planeación",
-        permission: [{ permission: "*", pattern: "*", action: "deny" }],
-      },
-      signal,
-    );
+    const session = sessionId
+      ? { id: sessionId }
+      : await this.call<{ id: string }>(
+          "/session" + query,
+          {
+            title: "Daedalus · planeación",
+            permission: [{ permission: "*", pattern: "*", action: "deny" }],
+          },
+          signal,
+        );
     await onSession(session.id);
     const abort = () => {
       monitor.abort(signal.reason);

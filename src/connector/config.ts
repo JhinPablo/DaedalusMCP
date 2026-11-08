@@ -10,6 +10,7 @@ export const configSchema = z.object({
   opencodeModel: z.string().default("deepseek-v4.1-flash-free"),
   planningFallback: z.enum(["none", "luna-high"]).default("none"),
   publishRepository: z.literal("JhinPablo/DaedalusMCP").optional(),
+  releaseControlUrl: z.string().url().startsWith("https://").optional(),
   projects: z
     .array(
       z.object({

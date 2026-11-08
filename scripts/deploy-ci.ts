@@ -27,6 +27,25 @@ async function api<T>(route: string, body?: unknown): Promise<T> {
   if (!r.ok) throw new Error(`Daedalus ${r.status}: ${(await r.text()).slice(0, 200)}`);
   return (await r.json()) as T;
 }
+async function stagingApi<T>(route: string, body?: unknown): Promise<T> {
+  const response = await fetch(process.env.STAGING_URL + "/api" + route, {
+    method: body === undefined ? "GET" : "POST",
+    headers: {
+      Authorization: "Bearer " + process.env.STAGING_DAEDALUS_CI_TOKEN,
+      "Content-Type": "application/json",
+      "CF-Access-Client-Id": process.env.STAGING_ACCESS_CLIENT_ID ?? "",
+      "CF-Access-Client-Secret": process.env.STAGING_ACCESS_CLIENT_SECRET ?? "",
+    },
+    body: body === undefined ? undefined : JSON.stringify(body),
+    signal: AbortSignal.timeout(20000),
+  });
+  if (!response.ok) throw new Error("Staging control " + response.status);
+  return response.json() as Promise<T>;
+}
+const control = <T>(route: string, body?: unknown) =>
+  mode === "staging" && candidate?.kind === "repository"
+    ? stagingApi<T>(route, body)
+    : api<T>(route, body);
 async function gh<T>(route: string, method = "GET", body?: unknown): Promise<T> {
   const args = ["api", route, "--method", method];
   if (body) args.push("--input", "-");
@@ -83,7 +102,55 @@ async function download(runId: string, destination: string) {
     destination,
   ]);
 }
+async function verifyProduction(commit: string) {
+  for (let attempt = 0; attempt < 10; attempt++) {
+    const response = await fetch(process.env.PRODUCTION_URL + "/api/version", {
+      headers: {
+        Authorization: "Bearer " + process.env.PRODUCTION_DAEDALUS_CI_TOKEN,
+        "CF-Access-Client-Id": process.env.PRODUCTION_ACCESS_CLIENT_ID ?? "",
+        "CF-Access-Client-Secret": process.env.PRODUCTION_ACCESS_CLIENT_SECRET ?? "",
+      },
+      signal: AbortSignal.timeout(10000),
+    });
+    if (
+      response.ok &&
+      ((await response.json()) as { buildId: string }).buildId === commit
+    )
+      return;
+    await new Promise((resolve) => setTimeout(resolve, 3000));
+  }
+  throw new Error(
+    "Production does not serve the approved build; reconcile before retrying",
+  );
+}
+async function cleanPublishedBranches(productionCommit: string) {
+  // Delete only refs whose complete history is reachable from verified production.
+  const branches: Array<{ name: string; commit: { sha: string } }> = [];
+  for (let page = 1; ; page++) {
+    const batch = await gh<typeof branches>(
+      `repos/${repository}/branches?per_page=100&page=${page}`,
+    );
+    branches.push(...batch);
+    if (batch.length < 100) break;
+  }
+  for (const branch of branches) {
+    if (["main", "staging"].includes(branch.name)) continue;
+    const compare = await gh<{ status: string }>(
+      `repos/${repository}/compare/${productionCommit}...${branch.commit.sha}`,
+    );
+    if (!["behind", "identical"].includes(compare.status)) continue;
+    // The lease makes deletion conditional on the exact audited tip, atomically.
+    await exec("git", [
+      "push",
+      "origin",
+      `--force-with-lease=refs/heads/${branch.name}:${branch.commit.sha}`,
+      `:refs/heads/${branch.name}`,
+    ]);
+    console.log("Removed branch included in production: " + branch.name);
+  }
+}
 let candidate: ReleaseCandidate | undefined;
+let publicationStarted = false;
 try {
   if (mode === "staging") {
     const sha = process.env.DAEDALUS_SOURCE_SHA,
@@ -94,8 +161,27 @@ try {
       (r) => r.commit === sha && r.status === "testing",
     );
     if (!candidate) {
-      console.log("No registered candidate for this CI run; no deployment.");
-      process.exit(0);
+      const source = await gh<{ sha: string }>(`repos/${repository}/commits/staging`);
+      if (source.sha !== sha) throw new Error("Obsolete staging CI run");
+      const main = await gh<{ sha: string }>(`repos/${repository}/commits/main`);
+      const commit = await gh<{ tree: { sha: string } }>(
+        `repos/${repository}/git/commits/${sha}`,
+      );
+      candidate = {
+        id: crypto.randomUUID(),
+        kind: "repository",
+        sessionId: "repository",
+        repository,
+        branch: "staging",
+        commit: sha,
+        baseCommit: main.sha,
+        tree: commit.tree.sha,
+        ciRunId: run,
+        checks: "pending",
+        status: "testing",
+        createdAt: "",
+        updatedAt: "",
+      };
     }
     candidate.ciRunId = run;
   } else {
@@ -115,6 +201,7 @@ try {
   if (mode === "rollback") {
     if (r.error !== "rollback-requested" || !r.previousVersion)
       throw new Error("Rollback not authorized");
+    publicationStarted = true;
     await cf([
       "workers",
       "deployments",
@@ -141,6 +228,8 @@ try {
     name: string;
     path: string;
     head_repository: { full_name: string };
+    event: string;
+    head_branch: string;
   }>(`repos/${repository}/actions/runs/${r.ciRunId}`);
   if (
     run.head_sha !== r.commit ||
@@ -150,10 +239,24 @@ try {
     !run.path.startsWith(".github/workflows/ci.yml")
   )
     throw new Error("Untrusted or unsuccessful CI run");
+  if (
+    r.kind === "repository" &&
+    (run.event !== "push" || run.head_branch !== "staging")
+  )
+    throw new Error("Repository preview requires a staging push from this repository");
   const main = await gh<{ sha: string }>(`repos/${repository}/commits/main`);
   if (main.sha !== r.baseCommit)
     throw new Error("main changed; rebuild and approve a new candidate");
-  if (mode !== "bootstrap") {
+  if (r.kind === "repository") {
+    const source = await gh<{ sha: string }>(`repos/${repository}/commits/staging`);
+    if (source.sha !== r.commit)
+      throw new Error("Staging changed; rebuild and approve again");
+    const comparison = await gh<{ status: string }>(
+      `repos/${repository}/compare/${r.baseCommit}...${r.commit}`,
+    );
+    if (!["ahead", "identical"].includes(comparison.status))
+      throw new Error("Staging must include the current main");
+  } else if (mode !== "bootstrap") {
     const pr = await gh<{
       head: { sha: string; repo: { full_name: string } };
       base: { ref: string };
@@ -186,6 +289,38 @@ try {
     (digest !== r.artifactDigest || String(artifact.id) !== r.artifactId)
   )
     throw new Error("Approved artifact changed");
+  if (mode === "staging" && r.kind === "repository") {
+    if (r.commit !== r.baseCommit) {
+      const prs = await gh<Array<{ number: number; html_url: string }>>(
+        `repos/${repository}/pulls?state=open&head=JhinPablo:staging&base=main`,
+      );
+      const pr =
+        prs[0] ??
+        (await gh<{ number: number; html_url: string }>(
+          `repos/${repository}/pulls`,
+          "POST",
+          {
+            head: "staging",
+            base: "main",
+            title: "✨feat: promote tested staging changes",
+            body: "Tested staging changes. Production deployment requires approval of the exact commit and artifact in Daedalus.",
+          },
+        ));
+      r.prNumber = pr.number;
+      r.prUrl = pr.html_url;
+    }
+    const prepared = await stagingApi<ReleaseCandidate>("/releases/repository", {
+      repository,
+      branch: "staging",
+      commit: r.commit,
+      baseCommit: r.baseCommit,
+      tree: r.tree,
+      ciRunId: r.ciRunId,
+      prNumber: r.prNumber,
+      prUrl: r.prUrl,
+    });
+    Object.assign(r, prepared);
+  }
   await mkdir("dist", { recursive: true });
   await cp(path.join(dir, "client"), "dist/client", { recursive: true });
   await mkdir("dist/worker", { recursive: true });
@@ -236,23 +371,40 @@ try {
   }
   if (mode === "production") {
     previousVersion = await currentVersion();
-    const merged = await gh<{ sha: string; merged: boolean }>(
-      `repos/${repository}/pulls/${r.prNumber}/merge`,
-      "PUT",
-      { sha: r.commit, merge_method: "merge" },
-    );
-    if (!merged.merged) throw new Error("PR was not merged");
-    mergedCommit = merged.sha;
-    const result = await gh<{ tree: { sha: string } }>(
-      `repos/${repository}/git/commits/${merged.sha}`,
-    );
-    if (result.tree.sha !== r.tree)
-      throw new Error("Merged tree does not match approved tree");
+    if (r.kind === "repository" && r.commit === r.baseCommit) {
+      mergedCommit = r.commit;
+    } else {
+      let prNumber = r.prNumber;
+      if (r.kind === "repository") {
+        const prs = await gh<
+          Array<{ number: number; head: { sha: string }; base: { sha: string } }>
+        >(`repos/${repository}/pulls?state=open&head=JhinPablo:staging&base=main`);
+        const pr = prs.find(
+          (p) => p.head.sha === r.commit && p.base.sha === r.baseCommit,
+        );
+        if (!pr) throw new Error("Missing reviewed staging PR for the approved source");
+        prNumber = pr.number;
+      }
+      publicationStarted = true;
+      const merged = await gh<{ sha: string; merged: boolean }>(
+        `repos/${repository}/pulls/${prNumber}/merge`,
+        "PUT",
+        { sha: r.commit, merge_method: "merge" },
+      );
+      if (!merged.merged) throw new Error("PR was not merged");
+      mergedCommit = merged.sha;
+      const result = await gh<{ tree: { sha: string } }>(
+        `repos/${repository}/git/commits/${merged.sha}`,
+      );
+      if (result.tree.sha !== r.tree)
+        throw new Error("Merged tree does not match approved tree");
+    }
   }
   await exec("npx", ["tsx", "scripts/package-worker.ts"], {
     env,
     maxBuffer: 4 * 1024 * 1024,
   });
+  publicationStarted = mode !== "staging";
   await exec("npx", ["cf", "deploy", "--prebuilt", "--tag", r.commit], {
     env,
     maxBuffer: 4 * 1024 * 1024,
@@ -287,7 +439,7 @@ try {
       );
   }
   if (mode === "staging")
-    await api(`/releases/${r.id}/result`, {
+    await control(`/releases/${r.id}/result`, {
       commit: r.commit,
       baseCommit: r.baseCommit,
       tree: r.tree,
@@ -297,7 +449,8 @@ try {
       checks: "passed",
       previewUrl: process.env.STAGING_URL,
     });
-  else
+  else {
+    if (mode === "production") await verifyProduction(r.commit);
     await api(`/releases/${r.id}/complete`, {
       status: "published",
       fingerprint: r.fingerprint,
@@ -305,18 +458,26 @@ try {
       previousVersion,
       mergedCommit,
     });
+    if (mode === "production") {
+      await cleanPublishedBranches(mergedCommit!).catch((error) =>
+        console.warn(
+          "Production verified; branch cleanup needs attention: " + String(error),
+        ),
+      );
+    }
+  }
   console.log("Deployment completed and reported: " + mode);
 } catch (error) {
   console.error(error instanceof Error ? error.message : String(error));
   if (candidate && mode === "staging")
-    await api(`/releases/${candidate.id}/fail`, {
+    await control(`/releases/${candidate.id}/fail`, {
       commit: candidate.commit,
       error:
         "Fallaron las comprobaciones o el despliegue de staging. Consulta el workflow de GitHub.",
     }).catch(() => {});
   if (candidate && mode !== "staging")
     await api(`/releases/${candidate.id}/complete`, {
-      status: "uncertain",
+      status: publicationStarted ? "uncertain" : "failed",
       fingerprint: candidate.fingerprint,
       error:
         "El workflow se interrumpió; comprobar GitHub y la versión de Cloudflare antes de continuar.",
