@@ -99,7 +99,9 @@ function Empty({ title, children }: { title: string; children: ReactNode }) {
 export function App() {
   const closeModal = useCallback(() => setModal(null), []);
   const { state, error, refresh, updateAvailable } = useWorkspace();
-  const [page, setPage] = useState<Page>("workshop"),
+  const [page, setPage] = useState<Page>(() =>
+      location.hash === "#releases" ? "releases" : "workshop",
+    ),
     [sessionId, setSessionId] = useState<string | undefined>(() =>
       readLocal("selected-session", undefined),
     ),

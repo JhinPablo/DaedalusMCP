@@ -1,4 +1,6 @@
 import {
+  bootstrapReleaseInput,
+  registerBootstrap,
   releaseInput,
   releaseResult,
   prepareRelease,
@@ -152,7 +154,7 @@ export class Service {
     const s = structuredClone(normalizeWorkspace(this.repo.read()));
     s.credentials = s.credentials.map((c) => ({ ...c, hash: "" }));
     s.releases = s.releases.map((r) => ({ ...r, fingerprint: releaseFingerprint(r) }));
-    if (p.role === "connector" || p.role === "ci")
+    if (p.role !== "owner" && p.role !== "mcp")
       throw new DomainError(403, "Usa los endpoints de conector.");
     return s;
   }
@@ -162,6 +164,11 @@ export class Service {
         method = request.method;
       if (p.role === "migration")
         throw new DomainError(403, "Credencial exclusiva de migración inicial.");
+      if (p.role === "publisher" && !path.startsWith("/api/releases"))
+        throw new DomainError(
+          403,
+          "Credencial limitada a publicar la instalación aprobada.",
+        );
       if (
         p.role === "ci" &&
         !path.startsWith("/api/releases") &&
@@ -188,6 +195,22 @@ export class Service {
           })),
         );
       }
+      if (method === "POST" && path === "/api/releases/bootstrap") {
+        const data = bootstrapReleaseInput.parse(await readJson(request));
+        return Response.json(
+          this.mutate((e) =>
+            registerBootstrap(
+              e,
+              p,
+              data,
+              this.options.environment,
+              this.options.stagingUrl,
+              this.options.buildId,
+            ),
+          ),
+          { status: 201 },
+        );
+      }
       if (method === "POST" && path === "/api/releases") {
         const data = releaseInput.parse(await readJson(request));
         return Response.json(
@@ -201,13 +224,19 @@ export class Service {
       if (releaseRoute) {
         const [, id, action] = releaseRoute;
         if (method === "GET") {
-          if (p.role !== "owner" && p.role !== "ci" && p.role !== "connector")
+          if (
+            p.role !== "owner" &&
+            p.role !== "ci" &&
+            p.role !== "connector" &&
+            p.role !== "publisher"
+          )
             throw new DomainError(403, "Acceso denegado.");
           const r = normalizeWorkspace(this.repo.read()).releases.find(
             (r) => r.id === id,
           );
           if (!r) throw new DomainError(404, "Publicación no encontrada.");
-          if (p.role === "connector") assertReleaseConnector(this.repo.read(), p, r);
+          if (p.role === "connector" || p.role === "publisher")
+            assertReleaseConnector(this.repo.read(), p, r);
           return Response.json({ ...r, fingerprint: releaseFingerprint(r) });
         }
         if (method === "POST") {
@@ -272,7 +301,7 @@ export class Service {
               }),
             );
           if (action === "complete") {
-            if (p.role !== "ci" && p.role !== "connector")
+            if (p.role !== "ci" && p.role !== "connector" && p.role !== "publisher")
               throw new DomainError(403, "Solo publicador o CI.");
             const data = z
               .object({
@@ -291,7 +320,8 @@ export class Service {
               this.mutate((e) => {
                 const r = e.state.releases.find((r) => r.id === id);
                 if (!r) throw new DomainError(404, "Publicación no encontrada.");
-                if (p.role === "connector") assertReleaseConnector(e.state, p, r);
+                if (p.role === "connector" || p.role === "publisher")
+                  assertReleaseConnector(e.state, p, r);
                 if (
                   r.approval?.fingerprint !== data.fingerprint ||
                   releaseFingerprint(r) !== data.fingerprint

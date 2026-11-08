@@ -96,6 +96,14 @@ if (mode === "export") {
     );
   await writeFile(path.join(dir, "production.json"), JSON.stringify(payload));
   const staging = emptyWorkspace();
+  if (setup.staging.publisher)
+    staging.credentials.push({
+      id: "bootstrap-publisher",
+      label: "Publicador inicial (sin autoridad humana)",
+      role: "publisher",
+      hash: digest(setup.staging.publisher),
+      createdAt: new Date().toISOString(),
+    });
   staging.credentials.push({
     id: "staging-ci",
     label: "Staging CI",
