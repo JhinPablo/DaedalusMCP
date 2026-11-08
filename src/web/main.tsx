@@ -8,8 +8,16 @@ import "@xyflow/react/dist/style.css";
 import { App } from "./App";
 import "./style.css";
 import "./chat.css";
+import "./appearance.css";
+import "./glass/glass.css";
+import { initializeAppearance } from "./Appearance";
+const AnimatedBackground = React.lazy(() => import("./background/AnimatedBackground"));
+initializeAppearance();
 createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
+    <React.Suspense fallback={null}>
+      <AnimatedBackground />
+    </React.Suspense>
     <App />
   </React.StrictMode>,
 );

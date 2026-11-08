@@ -44,6 +44,7 @@ import { readLocal, writeLocal, useLocalText } from "./persistence";
 import { Releases } from "./Releases";
 import { BrowserNotifications } from "./BrowserNotifications";
 import { PreviewIdentity } from "./PreviewIdentity";
+import { Appearance } from "./Appearance";
 import { PermissionDetails, permissionDescription } from "./PermissionDetails";
 import { canRetryPreflight } from "../shared/run-state";
 import { Flow, WorkflowGuide } from "./Flow";
@@ -399,6 +400,7 @@ export function App() {
             </span>
           </div>
           <div className="topbar-right">
+            <Appearance />
             <ShieldCheck size={15} />
             <span>Aprobación humana</span>
             <button

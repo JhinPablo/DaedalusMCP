@@ -25,6 +25,104 @@ test("chat persistente, contexto secundario y publicaciones", async ({ page }) =
   ).toBe(true);
 });
 
+test("fondos Remotion día/noche, preferencias de vidrio y accesibilidad", async ({
+  page,
+}) => {
+  const cdp = await page.context().newCDPSession(page);
+  const media = (motion: string, transparency: string, forced = "none") =>
+    cdp.send("Emulation.setEmulatedMedia", {
+      features: [
+        { name: "prefers-color-scheme", value: "light" },
+        { name: "prefers-reduced-motion", value: motion },
+        { name: "prefers-reduced-transparency", value: transparency },
+        { name: "forced-colors", value: forced },
+      ],
+    });
+  await media("no-preference", "no-preference");
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await page.goto("/");
+  const background = page.getByTestId("animated-background");
+  await expect(background).toHaveAttribute("data-motion", "playing");
+  await expect(background).toHaveAttribute("data-theme", "light");
+  await expect(page.locator(".sheet")).toHaveAttribute("data-glass", "clear");
+  await expect
+    .poll(() =>
+      page.locator(".sheet").evaluate((el) => getComputedStyle(el).backdropFilter),
+    )
+    .not.toBe("none");
+  const firstFrame = await background
+    .locator("[data-frame]")
+    .getAttribute("data-frame");
+  await expect
+    .poll(() => background.locator("[data-frame]").getAttribute("data-frame"))
+    .not.toBe(firstFrame);
+  const fontsBefore = await page
+    .getByRole("heading", { name: "Habla con Daedalus" })
+    .evaluate((el) => getComputedStyle(el).fontFamily);
+  await page.getByLabel("Apariencia", { exact: true }).click();
+  await page
+    .getByLabel("Intensidad del vidrio en modo claro", { exact: true })
+    .fill("0.4");
+  await page.getByLabel("Animar fondo", { exact: true }).uncheck();
+  await expect(background).toHaveAttribute("data-motion", "paused");
+  await page.getByLabel("Apariencia", { exact: true }).click();
+  await page.screenshot({ path: ".daedalus/qa/workshop-day.png", fullPage: true });
+  await page.getByLabel("Apariencia", { exact: true }).click();
+  await page.getByRole("combobox", { name: "Tema", exact: true }).selectOption("dark");
+  await page
+    .getByLabel("Intensidad del vidrio en modo oscuro", { exact: true })
+    .fill("1.3");
+  await expect(background).toHaveAttribute("data-theme", "dark");
+  await expect(page.locator(".sheet")).toHaveAttribute("data-glass", "dark");
+  await expect(background.locator("image")).toHaveAttribute(
+    "href",
+    /workshop-night\.png$/,
+  );
+  expect((await page.request.get("/backgrounds/workshop-night.png")).status()).toBe(
+    200,
+  );
+  await page.getByLabel("Apariencia", { exact: true }).click();
+  await page.screenshot({ path: ".daedalus/qa/workshop-night.png", fullPage: true });
+  await page.reload();
+  await expect(background).toHaveAttribute("data-theme", "dark");
+  await expect(background).toHaveAttribute("data-motion", "paused");
+  await page.getByLabel("Apariencia", { exact: true }).click();
+  await expect(
+    page.getByLabel("Intensidad del vidrio en modo claro", { exact: true }),
+  ).toHaveValue("0.4");
+  await expect(
+    page.getByLabel("Intensidad del vidrio en modo oscuro", { exact: true }),
+  ).toHaveValue("1.3");
+  await page.getByLabel("Animar fondo", { exact: true }).check();
+  await media("reduce", "reduce");
+  await expect(background).toHaveAttribute("data-motion", "paused");
+  await expect
+    .poll(() =>
+      page.locator(".sheet").evaluate((el) => getComputedStyle(el).backdropFilter),
+    )
+    .toBe("none");
+  await expect(page.getByLabel("Animar fondo", { exact: true })).toBeDisabled();
+  await page.getByLabel("Apariencia", { exact: true }).click();
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(page.getByLabel("Enviar petición")).toBeVisible();
+  expect(
+    await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth),
+  ).toBe(true);
+  expect(
+    await page
+      .getByRole("heading", { name: "Habla con Daedalus" })
+      .evaluate((el) => getComputedStyle(el).fontFamily),
+  ).toBe(fontsBefore);
+  await media("reduce", "no-preference");
+  await page.screenshot({
+    path: ".daedalus/qa/workshop-night-mobile.png",
+    fullPage: true,
+  });
+  await media("reduce", "reduce", "active");
+  await expect(background).toBeHidden();
+  await expect(page.getByLabel("Enviar petición")).toBeVisible();
+});
+
 test("permisos legibles, enlaces de entrega y avisos sin duplicados", async ({
   page,
 }) => {

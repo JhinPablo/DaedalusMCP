@@ -1,0 +1,249 @@
+@property --glass-intensity-light {
+  syntax: "<number>";
+  inherits: true;
+  initial-value: 1;
+}
+@property --glass-intensity-dark {
+  syntax: "<number>";
+  inherits: true;
+  initial-value: 1;
+}
+@property --glass-density {
+  syntax: "<number>";
+  inherits: true;
+  initial-value: 1;
+}
+@property --glass-tint {
+  syntax: "<color>";
+  inherits: true;
+  initial-value: white;
+}
+@property --glass-ink {
+  syntax: "<color>";
+  inherits: true;
+  initial-value: #131416;
+}
+:root {
+  --solid-text: #131416;
+  --solid-muted: #5d5f60;
+  --glass-intensity-light: 1;
+  --glass-intensity-dark: 1;
+}
+:root[data-theme="dark"] {
+  --solid-text: #edf3f7;
+  --solid-muted: #b6c5ce;
+}
+#root {
+  isolation: isolate;
+}
+.app-shell {
+  position: relative;
+  z-index: 1;
+}
+.ambient-background {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+.ambient-player {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  translate: -50% -50%;
+  width: max(100vw, 160vh);
+  height: max(100vh, 62.5vw);
+}
+.topbar {
+  position: relative;
+  z-index: 40;
+}
+[data-glass] {
+  --glass-intensity: clamp(0, var(--glass-intensity-light), 1.5);
+  --glass-tint: white;
+  --glass-ink: rgb(0 0 0 / 0.86);
+  --glass-secondary: rgb(60 60 67 / 0.7);
+  --glass-alpha: calc((0.06 + 0.16 * var(--glass-density)) * var(--glass-intensity));
+  --glass-filter: blur(2px) saturate(180%)
+    brightness(calc(1 + 0.06 * min(1, var(--glass-intensity))));
+  --glass-edge:
+    inset 1.5px 1.5px 1px -1px rgb(255 255 255 / 0.95),
+    inset -1.5px -1.5px 1px -1px rgb(255 255 255 / 0.55),
+    inset 0 0 0 0.5px rgb(255 255 255 / 0.3), 0 0 0 0.5px rgb(0 0 0 / 0.06),
+    0 6px 24px rgb(0 0 0 / 0.08);
+  --glass-blend: multiply;
+  --text: var(--glass-ink);
+  --muted: var(--glass-secondary);
+  background: var(--surface);
+  color: var(--glass-ink);
+  transition:
+    --glass-intensity-light 0.35s,
+    --glass-intensity-dark 0.35s,
+    --glass-tint 0.35s,
+    --glass-ink 0.35s;
+}
+[data-glass="dark"] {
+  --glass-intensity: clamp(0, var(--glass-intensity-dark), 1.5);
+  --glass-tint: rgb(20 20 24);
+  --glass-ink: rgb(255 255 255 / 0.94);
+  --glass-secondary: rgb(235 235 245 / 0.64);
+  --glass-alpha: calc((0.16 + 0.22 * var(--glass-density)) * var(--glass-intensity));
+  --glass-filter: blur(2px) saturate(160%) brightness(0.8);
+  --glass-edge:
+    inset 1.5px 1.5px 1px -1px rgb(255 255 255 / 0.32),
+    inset -1.5px -1.5px 1px -1px rgb(255 255 255 / 0.18),
+    inset 0 0 0 0.5px rgb(255 255 255 / 0.1), 0 0 0 0.5px rgb(0 0 0 / 0.3),
+    0 6px 24px rgb(0 0 0 / 0.16);
+  --glass-blend: plus-lighter;
+}
+[data-glass][data-glass-sampling="live-background-theme-fallback"] {
+  --muted: var(--glass-ink);
+}
+@supports (background: color-mix(in srgb, white, transparent)) and
+  (backdrop-filter: blur(2px)) {
+  [data-glass] {
+    background: color-mix(
+      in srgb,
+      var(--glass-tint) calc(var(--glass-alpha) * 100%),
+      transparent
+    );
+    backdrop-filter: var(--glass-filter) var(--glass-lens,);
+    -webkit-backdrop-filter: var(--glass-filter) var(--glass-lens,);
+    box-shadow: var(--glass-edge);
+    background-image: radial-gradient(
+      ellipse at top left,
+      rgb(255 255 255 / 0.3),
+      transparent 55%
+    );
+  }
+  [data-glass="dark"] {
+    background-image: radial-gradient(
+      ellipse at top left,
+      rgb(255 255 255 / 0.1),
+      transparent 55%
+    );
+  }
+}
+/* The scope of a material changes; geometry, typography and semantics do not. */
+[data-glass]
+  :is(
+    .composer,
+    .context-panel,
+    .content-page,
+    .permission-card,
+    .appearance-settings,
+    .message.user,
+    .chat-error,
+    .error-banner
+  ) {
+  --text: var(--solid-text);
+  --muted: var(--solid-muted);
+  color: var(--text);
+  background: var(--surface);
+}
+[data-glass] :is(input, textarea, select, button) {
+  color: var(--solid-text);
+}
+[data-glass] :is(.nav-link, .context-toggle, .text-button, .icon-button),
+[data-glass] .brand {
+  color: var(--glass-ink);
+}
+[data-glass] :is(.nav-link.active, .nav-link:hover) {
+  color: var(--solid-text);
+}
+[data-glass] :is(.primary, button.primary) {
+  color: var(--surface);
+}
+[data-glass] :is(.brand, .page-heading h1, .view-label, .breadcrumb, .nav-group) {
+  mix-blend-mode: var(--glass-blend);
+}
+[data-glass] :is(.brand, .nav-link, .context-toggle) svg {
+  color: currentColor;
+  opacity: 0.86;
+}
+[data-glass] .nav-link:hover {
+  background: color-mix(in srgb, white 42%, transparent);
+}
+[data-glass] .nav-link.active {
+  background: color-mix(in srgb, white 76%, transparent);
+}
+[data-glass] .chat-welcome p {
+  color: var(--glass-ink);
+}
+[data-glass] :is(.brand, .nav-link, .context-toggle) svg {
+  color: black;
+}
+[data-glass="dark"] :is(.brand, .nav-link, .context-toggle) svg {
+  color: white;
+  opacity: 0.94;
+}
+.composer button[type="submit"]:disabled {
+  color: var(--muted);
+}
+[data-glass="dark"] :is(.nav-link:hover, .nav-link.active) {
+  background: var(--active);
+}
+[data-glass] .chat-error {
+  color: var(--negative);
+  border-color: var(--negative);
+}
+[data-glass] .permission-card {
+  background: #fff9ed;
+  border-color: #d8ab67;
+}
+:root[data-theme="dark"] [data-glass] .permission-card {
+  background: #2e2530;
+  border-color: #a37e70;
+}
+@media (max-width: 900px) {
+  .sidebar[data-glass] {
+    background: var(--surface);
+    backdrop-filter: none;
+    --text: var(--solid-text);
+    --muted: var(--solid-muted);
+  }
+}
+@media (prefers-reduced-transparency: reduce) {
+  [data-glass] {
+    --text: var(--solid-text);
+    --muted: var(--solid-muted);
+    background: var(--surface);
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+    box-shadow: none;
+  }
+}
+@media (forced-colors: active) {
+  .ambient-background {
+    display: none;
+  }
+  [data-glass] {
+    --glass-ink: CanvasText;
+    --glass-secondary: CanvasText;
+    --solid-text: CanvasText;
+    --solid-muted: CanvasText;
+    background: Canvas;
+    color: CanvasText;
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+    box-shadow: none;
+  }
+  [data-glass]
+    :is(
+      .nav-link,
+      .nav-link.active,
+      .nav-link:hover,
+      .permission-card,
+      .chat-error,
+      button
+    ) {
+    background: Canvas;
+    color: CanvasText;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  [data-glass] {
+    transition: none;
+  }
+}
