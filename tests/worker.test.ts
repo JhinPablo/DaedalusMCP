@@ -200,3 +200,68 @@ it("SQLite del Durable Object conserva estado y aísla identidades", async () =>
   });
   expect(((await isolated.json()) as { projects: unknown[] }).projects).toHaveLength(0);
 });
+it("reports the active Worker build even when the Durable Object retains old metadata", async () => {
+  const versionServer = new Miniflare({
+    ...convertV4MiniflareOptions({
+      workers: [
+        {
+          name: "active-worker",
+          modules: true,
+          scriptPath: ".daedalus/test-worker.js",
+          compatibilityDate: "2026-11-06",
+          compatibilityFlags: ["nodejs_compat"],
+          durableObjects: {
+            WORKSPACE: {
+              className: "CachedWorkspace",
+              scriptName: "cached-workspace",
+              useSQLite: true,
+            },
+          },
+          bindings: {
+            BUILD_ID: "current-build",
+            ENVIRONMENT: "staging",
+            ACCESS_TEAM_DOMAIN: "test.cloudflareaccess.com",
+            ACCESS_AUD: "test-audience",
+            OWNER_EMAIL: "owner@example.com",
+          },
+        },
+        {
+          name: "cached-workspace",
+          modules: true,
+          compatibilityDate: "2026-11-06",
+          durableObjects: { OWN: { className: "CachedWorkspace", useSQLite: true } },
+          script: `import {DurableObject} from 'cloudflare:workers';
+        export class CachedWorkspace extends DurableObject {
+          async authenticate(token) { return token === 'ci-test' ? {role:'ci',id:'ci'} : null; }
+          async fetch() { return Response.json({buildId:'previous-build',environment:'staging',apiVersion:1}); }
+        }
+        export default {fetch() {return new Response('internal');}};`,
+        },
+      ],
+    }),
+    resourcePersistencePath: await mkdtemp(path.join(tmpdir(), "daedalus-version-")),
+  });
+  try {
+    const response = await versionServer.dispatchFetch(
+      "https://daedalus.test/api/version",
+      {
+        headers: { Authorization: "Bearer ci-test" },
+      },
+    );
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({
+      buildId: "current-build",
+      environment: "staging",
+    });
+    expect(response.headers.get("Cache-Control")).toBe("no-store");
+    const denied = await versionServer.dispatchFetch(
+      "https://daedalus.test/api/version",
+      {
+        headers: { Authorization: "Bearer invalid" },
+      },
+    );
+    expect(denied.status).toBe(401);
+  } finally {
+    await versionServer.dispose();
+  }
+});

@@ -190,6 +190,22 @@ export default {
       }
       if (!principal)
         return Response.json({ error: "Autenticación requerida." }, { status: 401 });
+      // A warm Durable Object can retain constructor metadata from the previous
+      // deployment. The active front Worker is the authority for build identity.
+      if (url.pathname === "/api/version" && request.method === "GET") {
+        if (!["owner", "ci", "connector", "mcp"].includes(principal.role))
+          return new Response("Forbidden", { status: 403 });
+        return Response.json(
+          { buildId: env.BUILD_ID, environment: env.ENVIRONMENT, apiVersion: 1 },
+          {
+            headers: {
+              "Cache-Control": "no-store",
+              "X-Content-Type-Options": "nosniff",
+              "Referrer-Policy": "same-origin",
+            },
+          },
+        );
+      }
       if (url.pathname === "/events" && request.headers.get("Origin") !== url.origin)
         return new Response("Forbidden", { status: 403 });
       if (
