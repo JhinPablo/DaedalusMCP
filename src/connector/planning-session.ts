@@ -36,6 +36,14 @@ export function previousPlanningSession(
 
 export async function loadPlanningSession(root: string, run: AgentRun, model: string) {
   const journals: PlanningJournal[] = [];
+  try {
+    // Explicit migration metadata; never imported into the execution/replay queue.
+    journals.push(
+      ...JSON.parse(await readFile(path.join(root, "planning-history.json"), "utf8")),
+    );
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+  }
   for (const file of await readdir(root)) {
     if (!/^[a-f0-9-]{36}\.json$/.test(file)) continue;
     // Corrupt execution evidence must not silently create a replacement conversation.
