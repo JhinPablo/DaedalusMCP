@@ -10,6 +10,8 @@ import { projectContext } from "./context";
 import { taskReport, ExecutionOutcomeError } from "./outcome";
 import { loadSkills, skillCatalog, type SkillEntry } from "./skills";
 import type { AgentRun, PermissionRequest } from "../shared/model";
+import type { ReleaseCandidate } from "../shared/model";
+import { publishReviews } from "./publisher";
 
 interface Journal {
   run: AgentRun;
@@ -25,7 +27,15 @@ const config = await loadConfig(configPath),
 let token = process.env[config.tokenEnv];
 if (!token && new URL(base).hostname === "127.0.0.1") {
   try {
-    token = (await readFile(".daedalus/dev-connector-token", "utf8")).trim();
+    token = (
+      await readFile(
+        path.join(
+          path.dirname(path.resolve(configPath)),
+          ".daedalus/dev-connector-token",
+        ),
+        "utf8",
+      )
+    ).trim();
   } catch {
     /* explicit setup error below */
   }
@@ -137,6 +147,7 @@ async function register() {
 const active = new Map<string, AbortController>();
 let permissions: PermissionRequest[] = [];
 let stopping = false;
+let draining = false;
 async function permission(
   run: AgentRun,
   method: string,
@@ -392,7 +403,10 @@ async function execute(run: AgentRun, relatedRuns: AgentRun[]) {
     journal.stage = "finished";
     await save(journal);
     try {
-      await api("/api/runs/" + run.id + "/finish", journal.outcome);
+      await api("/api/runs/" + run.id + "/finish", {
+        ...journal.outcome,
+        localArtifactPath: path.join(root, run.id + ".json"),
+      });
       log(`Finalizada ${run.id}: ${String(journal.outcome?.status)}`);
     } catch {
       log(`Resultado conservado localmente para reconciliar: ${run.id}`);
@@ -436,19 +450,34 @@ let lastRegister = Date.now(),
   lastProbe = Date.now();
 while (!stopping) {
   try {
+    try {
+      await readFile(path.join(root, "drain"));
+      draining = true;
+      if (!active.size) {
+        stopping = true;
+        break;
+      }
+    } catch {}
     if (Date.now() - lastProbe > 60000) {
       await probe();
       lastProbe = Date.now();
     }
-    if (Date.now() - lastRegister > 15000) {
+    if (Date.now() - lastRegister > 60000) {
       await register();
       await reconcile();
       lastRegister = Date.now();
     }
     const control = await api<{
+      run: AgentRun | null;
+      relatedRuns: AgentRun[];
       cancelledSessions: string[];
       permissions: PermissionRequest[];
-    }>("/api/connector/control");
+      completedReviews: AgentRun[];
+      releases: ReleaseCandidate[];
+    }>("/api/connector/poll", {
+      capacity:
+        stopping || draining ? 0 : Math.max(0, config.maxParallel - active.size),
+    });
     permissions = control.permissions;
     for (const [runId, c] of active) {
       const j = JSON.parse(
@@ -456,19 +485,22 @@ while (!stopping) {
       ) as Journal;
       if (control.cancelledSessions.includes(j.run.sessionId)) c.abort();
     }
-    if (active.size < config.maxParallel) {
-      const job = await api<{ run: AgentRun | null; relatedRuns: AgentRun[] }>(
-        "/api/connector/claim",
-        {},
+    if (control.run)
+      void execute(control.run, control.relatedRuns).catch((e) =>
+        log("Fallo del conector: " + String(e)),
       );
-      if (job.run)
-        void execute(job.run, job.relatedRuns).catch((e) =>
-          log("Fallo del conector: " + String(e)),
-        );
-    }
+    if (!active.size && !draining && config.publishRepository)
+      await publishReviews(
+        config.publishRepository,
+        root,
+        control.completedReviews ?? [],
+        control.releases ?? [],
+        api,
+        config.projects,
+      );
   } catch (e) {
     log(e instanceof Error ? e.message : String(e));
   }
-  await delay(1500);
+  await delay(active.size ? 5000 : 15000);
 }
 while (active.size) await delay(300);

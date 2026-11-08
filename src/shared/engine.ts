@@ -360,7 +360,7 @@ export class Engine {
     if (p.role !== "connector") throw new DomainError(403, "Se requiere un conector.");
     const c = this.state.connectors.find((c) => c.id === p.id);
     if (!c) throw new DomainError(409, "Registra el conector primero.");
-    c.lastSeen = now();
+    if (Date.now() - Date.parse(c.lastSeen) >= 30000) c.lastSeen = now();
     const run = this.state.runs.find(
       (r) =>
         r.status === "queued" &&

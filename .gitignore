@@ -14,3 +14,5 @@ coverage/
 .taste-skill/chat-after/
 .taste-skill/*
 !.taste-skill/direction.json
+playwright-report/
+test-results/

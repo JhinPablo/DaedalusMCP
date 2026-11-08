@@ -11,7 +11,7 @@ import {
 
 // These build-output helpers are version-pinned alongside cf in package-lock.json.
 const root = process.cwd(),
-  ctx = { isPreview: false, mode: "production" };
+  ctx = { isPreview: false, mode: process.env.DAEDALUS_ENVIRONMENT ?? "production" };
 const { result } = await loadAndParseConfig(
   path.join(root, "cloudflare.config.ts"),
   ctx,

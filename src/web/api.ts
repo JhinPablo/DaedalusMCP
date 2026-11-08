@@ -12,7 +12,8 @@ export async function request<T>(path: string, body?: unknown): Promise<T> {
 }
 export function useWorkspace() {
   const [state, setState] = useState<Workspace | null>(null),
-    [error, setError] = useState("");
+    [error, setError] = useState(""),
+    [updateAvailable, setUpdateAvailable] = useState(false);
   const refresh = useCallback(async () => {
     try {
       const next = await request<Workspace>("/state");
@@ -24,20 +25,66 @@ export function useWorkspace() {
   }, []);
   useEffect(() => {
     void refresh();
-    const timer = setInterval(() => void refresh(), 4000);
+    let disposed = false,
+      retries = 0,
+      reconnect: ReturnType<typeof setTimeout> | undefined;
     let ws: WebSocket | undefined;
-    try {
-      ws = new WebSocket(
-        `${location.protocol === "https:" ? "wss:" : "ws:"}//${location.host}/events`,
-      );
-      ws.onmessage = () => void refresh();
-    } catch {
-      /* polling remains available */
-    }
+    const connect = () => {
+      if (disposed) return;
+      try {
+        ws = new WebSocket(
+          `${location.protocol === "https:" ? "wss:" : "ws:"}//${location.host}/events`,
+        );
+        ws.onmessage = () => void refresh();
+        ws.onopen = () => {
+          retries = 0;
+          void refresh();
+          void version();
+        };
+        ws.onclose = () => {
+          if (!disposed)
+            reconnect = setTimeout(
+              connect,
+              Math.min(30000, 1000 * 2 ** Math.min(retries++, 5)),
+            );
+        };
+      } catch {
+        if (!disposed) reconnect = setTimeout(connect, 30000);
+      }
+    };
+    const version = async () => {
+      try {
+        const info = await request<{ buildId: string }>("/version");
+        const current = import.meta.env.VITE_DAEDALUS_BUILD_ID ?? "local";
+        if (
+          !disposed &&
+          current !== "local" &&
+          info.buildId !== "local" &&
+          current !== info.buildId
+        )
+          setUpdateAvailable(true);
+      } catch {}
+    };
+    connect();
+    const timer = setInterval(() => {
+      if (document.visibilityState !== "visible") return;
+      if (ws?.readyState !== WebSocket.OPEN) void refresh();
+      void version();
+    }, 30000);
+    const visible = () => {
+      if (document.visibilityState === "visible") {
+        void refresh();
+        if (ws?.readyState === WebSocket.CLOSED) connect();
+      }
+    };
+    document.addEventListener("visibilitychange", visible);
     return () => {
       clearInterval(timer);
+      disposed = true;
+      if (reconnect) clearTimeout(reconnect);
+      document.removeEventListener("visibilitychange", visible);
       ws?.close();
     };
   }, [refresh]);
-  return { state, error, refresh };
+  return { state, error, refresh, updateAvailable };
 }

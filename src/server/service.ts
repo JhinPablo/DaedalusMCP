@@ -1,6 +1,15 @@
+import {
+  releaseInput,
+  releaseResult,
+  prepareRelease,
+  reportRelease,
+  approveRelease,
+  releaseFingerprint,
+  assertReleaseConnector,
+} from "./releases";
 import { z } from "zod";
 import { Engine, DomainError, digest } from "../shared/engine";
-import { type Principal, type Workspace } from "../shared/model";
+import { normalizeWorkspace, type Principal, type Workspace } from "../shared/model";
 import skillLock from "../../skills-lock.json";
 
 export interface Repository {
@@ -36,6 +45,7 @@ const completion = z.object({
   baseCommit: z.string().max(64).optional(),
   changes: z.string().max(50000).optional(),
   preflightFailure: z.boolean().optional(),
+  localArtifactPath: z.string().max(2000).optional(),
 });
 
 export async function readJson(request: Request) {
@@ -92,21 +102,39 @@ export class Service {
     public repo: Repository,
     public blobs: BlobStore,
     public notify: () => void = () => {},
+    public options: {
+      buildId?: string;
+      environment?: string;
+      stagingUrl?: string;
+    } = {},
   ) {}
   mutate<T>(fn: (e: Engine) => T): T {
-    const state = structuredClone(this.repo.read()),
+    const before = normalizeWorkspace(this.repo.read()),
+      state = structuredClone(before),
       e = new Engine(state);
     e.recoverStale();
     const result = fn(e);
-    state.revision++;
-    this.repo.write(state);
-    this.notify();
+    if (JSON.stringify(state) !== JSON.stringify(before)) {
+      state.revision++;
+      this.repo.write(state);
+      this.notify();
+    }
     return result;
   }
   authenticate(token: string): Principal | null {
     const hash = digest(token);
     const c = this.repo.read().credentials.find((c) => c.hash === hash && !c.revokedAt);
     return c ? { id: c.id, role: c.role } : null;
+  }
+  async storeArtifact(key: string, content: string): Promise<"cloud" | "local"> {
+    try {
+      await this.blobs.put(key, content);
+      return "cloud";
+    } catch (error) {
+      if (error instanceof DomainError && [413, 507].includes(error.status))
+        return "local";
+      throw error;
+    }
   }
   view(p: Principal) {
     const before = this.repo.read();
@@ -121,9 +149,10 @@ export class Service {
       )
     )
       this.mutate((e) => e.recoverStale());
-    const s = structuredClone(this.repo.read());
+    const s = structuredClone(normalizeWorkspace(this.repo.read()));
     s.credentials = s.credentials.map((c) => ({ ...c, hash: "" }));
-    if (p.role === "connector")
+    s.releases = s.releases.map((r) => ({ ...r, fingerprint: releaseFingerprint(r) }));
+    if (p.role === "connector" || p.role === "ci")
       throw new DomainError(403, "Usa los endpoints de conector.");
     return s;
   }
@@ -131,6 +160,175 @@ export class Service {
     try {
       const path = new URL(request.url).pathname,
         method = request.method;
+      if (p.role === "migration")
+        throw new DomainError(403, "Credencial exclusiva de migración inicial.");
+      if (
+        p.role === "ci" &&
+        !path.startsWith("/api/releases") &&
+        path !== "/api/identity" &&
+        path !== "/api/version"
+      )
+        throw new DomainError(
+          403,
+          "Credencial limitada a resultados de publicaciones.",
+        );
+      if (method === "GET" && path === "/api/version")
+        return Response.json({
+          buildId: this.options.buildId ?? "local",
+          environment: this.options.environment ?? "local",
+          apiVersion: 1,
+        });
+      if (method === "GET" && path === "/api/releases") {
+        if (p.role !== "owner" && p.role !== "ci")
+          throw new DomainError(403, "Acceso denegado.");
+        return Response.json(
+          normalizeWorkspace(this.repo.read()).releases.map((r) => ({
+            ...r,
+            fingerprint: releaseFingerprint(r),
+          })),
+        );
+      }
+      if (method === "POST" && path === "/api/releases") {
+        const data = releaseInput.parse(await readJson(request));
+        return Response.json(
+          this.mutate((e) => prepareRelease(e, p, data)),
+          { status: 201 },
+        );
+      }
+      const releaseRoute = path.match(
+        /^\/api\/releases\/([^/]+)(?:\/(result|approve|claim|complete|rollback|fail))?$/,
+      );
+      if (releaseRoute) {
+        const [, id, action] = releaseRoute;
+        if (method === "GET") {
+          if (p.role !== "owner" && p.role !== "ci" && p.role !== "connector")
+            throw new DomainError(403, "Acceso denegado.");
+          const r = normalizeWorkspace(this.repo.read()).releases.find(
+            (r) => r.id === id,
+          );
+          if (!r) throw new DomainError(404, "Publicación no encontrada.");
+          if (p.role === "connector") assertReleaseConnector(this.repo.read(), p, r);
+          return Response.json({ ...r, fingerprint: releaseFingerprint(r) });
+        }
+        if (method === "POST") {
+          const body = await readJson(request);
+          if (action === "fail") {
+            if (p.role !== "ci") throw new DomainError(403, "Se requiere CI.");
+            const data = z
+              .object({ commit: z.string().length(40), error: z.string().max(2000) })
+              .parse(body);
+            return Response.json(
+              this.mutate((e) => {
+                const r = e.state.releases.find((r) => r.id === id);
+                if (!r || r.commit !== data.commit || r.status !== "testing")
+                  throw new DomainError(409, "Candidato de pruebas obsoleto.");
+                r.status = "failed";
+                r.error = data.error;
+                r.approval = undefined;
+                r.updatedAt = new Date().toISOString();
+                return r;
+              }),
+            );
+          }
+          if (action === "result")
+            return Response.json(
+              this.mutate((e) =>
+                reportRelease(
+                  e,
+                  p,
+                  id,
+                  releaseResult.parse(body),
+                  this.options.stagingUrl,
+                ),
+              ),
+            );
+          if (action === "approve") {
+            const data = z.object({ fingerprint: z.string().length(64) }).parse(body);
+            return Response.json(
+              this.mutate((e) => approveRelease(e, p, id, data.fingerprint)),
+            );
+          }
+          if (action === "claim")
+            return Response.json(
+              this.mutate((e) => {
+                const r = e.state.releases.find((r) => r.id === id);
+                if (!r) throw new DomainError(404, "Publicación no encontrada.");
+                assertReleaseConnector(e.state, p, r);
+                if (
+                  r.status !== "approved" ||
+                  r.approval?.fingerprint !== releaseFingerprint(r) ||
+                  e.state.releases.some(
+                    (x) =>
+                      x.id !== id && ["publishing", "uncertain"].includes(x.status),
+                  )
+                )
+                  throw new DomainError(
+                    409,
+                    "La publicación no está aprobada o hay otra sin reconciliar.",
+                  );
+                r.status = "publishing";
+                r.updatedAt = new Date().toISOString();
+                return r;
+              }),
+            );
+          if (action === "complete") {
+            if (p.role !== "ci" && p.role !== "connector")
+              throw new DomainError(403, "Solo publicador o CI.");
+            const data = z
+              .object({
+                status: z.enum(["published", "failed", "uncertain", "rolled_back"]),
+                fingerprint: z.string().length(64),
+                workerVersion: z.string().max(200).optional(),
+                previousVersion: z.string().max(200).optional(),
+                mergedCommit: z
+                  .string()
+                  .regex(/^[a-f0-9]{40}$/)
+                  .optional(),
+                error: z.string().max(2000).optional(),
+              })
+              .parse(body);
+            return Response.json(
+              this.mutate((e) => {
+                const r = e.state.releases.find((r) => r.id === id);
+                if (!r) throw new DomainError(404, "Publicación no encontrada.");
+                if (p.role === "connector") assertReleaseConnector(e.state, p, r);
+                if (
+                  r.approval?.fingerprint !== data.fingerprint ||
+                  releaseFingerprint(r) !== data.fingerprint
+                )
+                  throw new DomainError(409, "La aprobación no corresponde.");
+                if (r.status === data.status) return r;
+                if (!["publishing", "uncertain"].includes(r.status))
+                  throw new DomainError(409, "No hay publicación pendiente.");
+                if (
+                  data.status === "published" &&
+                  (!data.workerVersion || !data.mergedCommit)
+                )
+                  throw new DomainError(400, "Falta evidencia del despliegue.");
+                Object.assign(r, data, { updatedAt: new Date().toISOString() });
+                e.event(
+                  "release." + data.status,
+                  "Publicación: " + data.status,
+                  r.sessionId,
+                );
+                return r;
+              }),
+            );
+          }
+          if (action === "rollback")
+            return Response.json(
+              this.mutate((e) => {
+                e.owner(p);
+                const r = e.state.releases.find((r) => r.id === id);
+                if (!r || r.status !== "published" || !r.previousVersion)
+                  throw new DomainError(409, "No hay versión anterior para revertir.");
+                r.status = "approved";
+                r.error = "rollback-requested";
+                return r;
+              }),
+            );
+        }
+      }
       if (method === "GET" && path === "/api/state") return Response.json(this.view(p));
       if (method === "GET" && path === "/api/identity") return Response.json(p);
       if (method === "POST" && path === "/api/chat") {
@@ -164,7 +362,7 @@ export class Service {
       }
       if (method === "POST" && path === "/api/credentials") {
         const body = z
-          .object({ label: short, role: z.enum(["connector", "mcp"]) })
+          .object({ label: short, role: z.enum(["connector", "mcp", "ci"]) })
           .parse(await readJson(request));
         const token =
           "ddl_" +
@@ -229,6 +427,57 @@ export class Service {
         });
         return Response.json({ ok: true, connectorId: p.id });
       }
+      if (method === "POST" && path === "/api/connector/poll") {
+        if (p.role !== "connector")
+          throw new DomainError(403, "Se requiere un conector.");
+        const body = z
+          .object({ capacity: z.number().int().min(0).max(3) })
+          .parse(await readJson(request));
+        return Response.json(
+          this.mutate((e) => {
+            const c = e.state.connectors.find((c) => c.id === p.id);
+            if (!c) throw new DomainError(409, "Registra el conector primero.");
+            if (Date.now() - Date.parse(c.lastSeen) >= 30000)
+              c.lastSeen = new Date().toISOString();
+            const active = e.state.runs.filter(
+              (r) =>
+                r.connectorId === p.id &&
+                ["running", "waiting_permission"].includes(r.status),
+            );
+            const run = body.capacity > 0 && active.length < 3 ? e.claim(p) : null;
+            const ownSession = (id: string) =>
+              e.state.projects.some(
+                (project) =>
+                  project.connectorId === p.id &&
+                  project.id === e.state.sessions.find((s) => s.id === id)?.projectId,
+              );
+            return {
+              run,
+              relatedRuns: run
+                ? e.state.runs.filter(
+                    (r) =>
+                      r.sessionId === run.sessionId &&
+                      r.status === "completed" &&
+                      r.approvedVersion === run.approvedVersion,
+                  )
+                : [],
+              cancelledSessions: e.state.sessions
+                .filter((s) => s.phase === "cancelled")
+                .map((s) => s.id),
+              permissions: e.state.permissions.filter((x) =>
+                e.state.runs.some((r) => r.id === x.runId && r.connectorId === p.id),
+              ),
+              completedReviews: e.state.runs.filter(
+                (r) =>
+                  r.kind === "review" &&
+                  r.status === "completed" &&
+                  ownSession(r.sessionId),
+              ),
+              releases: e.state.releases.filter((r) => ownSession(r.sessionId)),
+            };
+          }),
+        );
+      }
       if (method === "POST" && path === "/api/connector/claim")
         return Response.json(
           this.mutate((e) => {
@@ -277,7 +526,9 @@ export class Service {
           if (["completed", "failed", "cancelled"].includes(run.status))
             return Response.json({ ok: true });
           const key = `artifacts/${runId}/result.md`;
-          if (data.output) await this.blobs.put(key, data.output);
+          const storage = data.output
+            ? await this.storeArtifact(key, data.output)
+            : "cloud";
           this.mutate((e) => {
             e.finish(p, runId, data);
             if (
@@ -292,6 +543,8 @@ export class Service {
                 mediaType: "text/markdown",
                 size: new TextEncoder().encode(data.output).length,
                 createdAt: new Date().toISOString(),
+                storage,
+                localPath: storage === "local" ? data.localArtifactPath : undefined,
               });
           });
         }
@@ -506,13 +759,14 @@ export class Service {
             name: short,
             content: z.string().max(400000),
             mediaType: z.enum(["text/plain", "text/markdown", "application/json"]),
+            localPath: z.string().max(2000).optional(),
           })
           .parse(await readJson(request));
         const e = new Engine(this.repo.read());
         e.assigned(p, e.run(body.runId));
         const artifactId = crypto.randomUUID(),
           key = `artifacts/${body.runId}/${artifactId}`;
-        await this.blobs.put(key, body.content);
+        const storage = await this.storeArtifact(key, body.content);
         const artifact = {
           id: artifactId,
           runId: body.runId,
@@ -521,6 +775,8 @@ export class Service {
           mediaType: body.mediaType,
           size: new TextEncoder().encode(body.content).length,
           createdAt: new Date().toISOString(),
+          storage,
+          localPath: storage === "local" ? body.localPath : undefined,
         };
         this.mutate((e) => {
           e.assigned(p, e.run(body.runId));
@@ -533,6 +789,14 @@ export class Service {
         if (p.role !== "owner") throw new DomainError(403, "Acceso denegado.");
         const a = this.repo.read().artifacts.find((a) => a.id === artifactRoute[1]);
         if (!a) throw new DomainError(404, "Artefacto no encontrado.");
+        if (a.storage === "local")
+          return Response.json(
+            {
+              error: "Artefacto conservado en el equipo local.",
+              localPath: a.localPath,
+            },
+            { status: 409 },
+          );
         const content = await this.blobs.get(a.key);
         return new Response(content, {
           headers: {

@@ -40,6 +40,9 @@ export class CodexClient {
   ) {
     this.permission = onPermission;
     const env = { ...process.env };
+    for (const key of Object.keys(env))
+      if (/(TOKEN|SECRET|PASSWORD|PRIVATE_KEY|API_KEY|ACCESS_KEY)/i.test(key))
+        delete env[key];
     delete env.OPENAI_API_KEY;
     this.process = spawn(command, ["app-server", "--listen", "stdio://"], {
       cwd,

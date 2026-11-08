@@ -101,6 +101,43 @@ export interface Artifact {
   mediaType: string;
   size: number;
   createdAt: string;
+  storage?: "cloud" | "local";
+  localPath?: string;
+}
+export interface ReleaseCandidate {
+  fingerprint?: string;
+  id: string;
+  sessionId: string;
+  repository: string;
+  branch: string;
+  commit: string;
+  baseCommit: string;
+  tree: string;
+  prNumber?: number;
+  prUrl?: string;
+  artifactDigest?: string;
+  artifactId?: string;
+  ciRunId?: string;
+  checks: "pending" | "passed" | "failed";
+  previewUrl?: string;
+  status:
+    | "preparing"
+    | "testing"
+    | "ready"
+    | "approved"
+    | "publishing"
+    | "published"
+    | "superseded"
+    | "failed"
+    | "uncertain"
+    | "rolled_back";
+  createdAt: string;
+  updatedAt: string;
+  approval?: { ownerId: string; at: string; fingerprint: string };
+  mergedCommit?: string;
+  workerVersion?: string;
+  previousVersion?: string;
+  error?: string;
 }
 export interface AgentRun {
   preflightFailure?: boolean;
@@ -179,12 +216,13 @@ export interface ConnectorInfo {
 export interface Credential {
   id: string;
   label: string;
-  role: "connector" | "mcp";
+  role: "connector" | "mcp" | "ci";
   hash: string;
   createdAt: string;
   revokedAt?: string;
 }
 export interface Workspace {
+  migrationId?: string;
   schemaVersion: 1;
   revision: number;
   projects: Project[];
@@ -195,8 +233,9 @@ export interface Workspace {
   events: Event[];
   connectors: ConnectorInfo[];
   credentials: Credential[];
+  releases: ReleaseCandidate[];
 }
-export type Role = "owner" | "connector" | "mcp";
+export type Role = "owner" | "connector" | "mcp" | "ci" | "migration";
 export interface Principal {
   role: Role;
   id: string;
@@ -212,6 +251,11 @@ export const emptyWorkspace = (): Workspace => ({
   events: [],
   connectors: [],
   credentials: [],
+  releases: [],
+});
+export const normalizeWorkspace = (state: Workspace): Workspace => ({
+  ...state,
+  releases: state.releases ?? [],
 });
 export const activeStatuses: RunStatus[] = [
   "queued",

@@ -40,11 +40,14 @@ import type {
   PermissionRequest,
 } from "../shared/model";
 import { request, useWorkspace } from "./api";
+import { readLocal, writeLocal, useLocalText } from "./persistence";
+import { Releases } from "./Releases";
 import { canRetryPreflight } from "../shared/run-state";
 import { Flow, WorkflowGuide } from "./Flow";
 import skillLock from "../../skills-lock.json";
 
-type Page = "workshop" | "execution" | "console" | "skills" | "connections";
+type Page =
+  "workshop" | "execution" | "console" | "skills" | "connections" | "releases";
 const MarkdownMessage = lazy(() => import("./MarkdownMessage"));
 const phases: Record<string, string> = {
   idea: "Idea inicial",
@@ -95,11 +98,15 @@ function Empty({ title, children }: { title: string; children: ReactNode }) {
 }
 export function App() {
   const closeModal = useCallback(() => setModal(null), []);
-  const { state, error, refresh } = useWorkspace();
+  const { state, error, refresh, updateAvailable } = useWorkspace();
   const [page, setPage] = useState<Page>("workshop"),
-    [sessionId, setSessionId] = useState<string>(),
+    [sessionId, setSessionId] = useState<string | undefined>(() =>
+      readLocal("selected-session", undefined),
+    ),
     [projectFilter, setProjectFilter] = useState(""),
-    [newChat, setNewChat] = useState(false),
+    [newChat, setNewChat] = useState(
+      () => readLocal<string>("selected-session", "") === "__new__",
+    ),
     [selected, setSelected] = useState<string>();
   const [modal, setModal] = useState<"create" | "branch" | "edit" | null>(null),
     [notice, setNotice] = useState(""),
@@ -115,8 +122,7 @@ export function App() {
       ? undefined
       : (visibleSessions.find((s) => s.id === sessionId) ?? visibleSessions.at(-1)),
     version = session && currentVersion(session);
-  const [message, setMessage] = useState(""),
-    [draft, setDraft] = useState(""),
+  const [draft, setDraft] = useState(""),
     [reason, setReason] = useState("");
   const chatInput = useRef<HTMLTextAreaElement>(null),
     chatBody = useRef<HTMLDivElement>(null);
@@ -128,6 +134,12 @@ export function App() {
     chatProjectId ||
     state?.projects[0]?.id ||
     "";
+  const [message, setMessage] = useLocalText(
+    `draft:${targetProject}:${session?.id ?? "new"}`,
+  );
+  useEffect(() => {
+    writeLocal("selected-session", sessionId);
+  }, [sessionId]);
   useEffect(() => {
     if (chatBody.current) chatBody.current.scrollTop = chatBody.current.scrollHeight;
   }, [session?.messages.length, session?.phase]);
@@ -207,6 +219,7 @@ export function App() {
     setSupportPanel(null);
   }
   function startChat() {
+    setSessionId("__new__");
     setNewChat(true);
     setSupportPanel(null);
     setMessage("");
@@ -283,6 +296,7 @@ export function App() {
           {(
             [
               ["workshop", MessageSquare, "Chat"],
+              ["releases", ArrowDownToLine, "Publicaciones"],
               ["execution", Workflow, "Ejecución"],
               ["console", Terminal, "Consola"],
               ["skills", Layers, "Biblioteca de skills"],
@@ -386,6 +400,12 @@ export function App() {
           </div>
         </header>
         <main className={"sheet " + (page === "workshop" ? "chat-sheet" : "")}>
+          {updateAvailable && (
+            <div className="notice" role="status">
+              Hay una nueva versión de Daedalus. Tu borrador está guardado.
+              <button onClick={() => location.reload()}>Actualizar ahora</button>
+            </div>
+          )}
           {(error || notice) && (
             <div className="notice" role="alert">
               {notice || error}
@@ -412,24 +432,28 @@ export function App() {
                   <div className="eyebrow">
                     {page === "workshop"
                       ? "Pensar antes de construir"
-                      : page === "execution"
-                        ? "Del plan al resultado"
-                        : page === "skills"
-                          ? "Conocimiento con procedencia"
-                          : page === "console"
-                            ? "Registro de actividad"
-                            : "Tu estación de trabajo"}
+                      : page === "releases"
+                        ? "Publicaciones"
+                        : page === "execution"
+                          ? "Del plan al resultado"
+                          : page === "skills"
+                            ? "Conocimiento con procedencia"
+                            : page === "console"
+                              ? "Registro de actividad"
+                              : "Tu estación de trabajo"}
                   </div>
                   <h1>
                     {page === "workshop"
                       ? (session?.title ?? "Nuevo chat")
-                      : page === "execution"
-                        ? "Ejecución"
-                        : page === "console"
-                          ? "Consola"
-                          : page === "skills"
-                            ? "Biblioteca de skills"
-                            : "Conexiones"}
+                      : page === "releases"
+                        ? "Publicaciones"
+                        : page === "execution"
+                          ? "Ejecución"
+                          : page === "console"
+                            ? "Consola"
+                            : page === "skills"
+                              ? "Biblioteca de skills"
+                              : "Conexiones"}
                   </h1>
                   <p>
                     {page === "workshop"
@@ -1202,6 +1226,9 @@ export function App() {
                     )}
                   </div>
                 </section>
+              )}
+              {page === "releases" && (
+                <Releases releases={state.releases ?? []} busy={busy} act={act} />
               )}
               {page === "skills" && (
                 <section className="content-page">

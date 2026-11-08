@@ -9,6 +9,7 @@ export const configSchema = z.object({
   opencodeUrl: z.string().url().default("http://127.0.0.1:4096"),
   opencodeModel: z.string().default("deepseek-v4.1-flash-free"),
   planningFallback: z.enum(["none", "luna-high"]).default("none"),
+  publishRepository: z.literal("JhinPablo/DaedalusMCP").optional(),
   projects: z
     .array(
       z.object({
@@ -32,6 +33,9 @@ export function inside(root: string, target: string) {
 }
 export async function loadConfig(file: string) {
   const c = configSchema.parse(JSON.parse(await readFile(file, "utf8")));
+  const configRoot = path.dirname(path.resolve(file));
+  c.skillsRoot = path.resolve(configRoot, c.skillsRoot);
+  c.journalRoot = path.resolve(configRoot, c.journalRoot);
   const url = new URL(c.serverUrl);
   if (
     url.protocol !== "https:" &&

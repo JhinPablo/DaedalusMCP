@@ -4,6 +4,8 @@ Un taller web para pasar de una idea a un prompt aprobado y a código verificabl
 
 **OpenCode + DeepSeek gratuito planean. Tú decides. Codex construye y revisa con tu sesión de ChatGPT.** El panel, el MCP y el estado se alojan en Cloudflare; un conector saliente ejecuta los motores en tu equipo.
 
+El uso habitual ocurre en el panel alojado. Producción y staging son Workers separados en `workers.dev`, protegidos con Access y con SQLite independiente. El repositorio público contiene únicamente código. Consulta [operación estable, publicaciones y migración](docs/deployment.md).
+
 ## Iniciar en Windows
 
 Necesitas Node.js 24, Git y Codex con inicio de sesión de ChatGPT. La CLI `cf` instalada recomienda Node 24.22 o superior. Las comprobaciones locales también se realizaron con Node 24.19.
@@ -29,6 +31,8 @@ Copia `connector.example.json` a `connector.local.json` y configura las carpetas
 ```powershell
 npm run connector
 ```
+
+Para el uso habitual con el panel alojado, configura `serverUrl` y las credenciales en `.daedalus/connection.json`, ejecuta `npm run connector:install` y después `npm run connector:stable`. Los cambios en el checkout no reinician ese conector. `npm run connector:update` aplica actualizaciones cuando termina el trabajo activo.
 
 Abre [Daedalus local](http://127.0.0.1:8787). El conector local lee su credencial de desarrollo desde `.daedalus/dev-connector-token`. Para producción crea una credencial desde **Conexiones** y guárdala en `DAEDALUS_CONNECTOR_TOKEN`; no la añadas al JSON ni al código.
 
@@ -75,12 +79,12 @@ Para ver el build final local: `npm run preview`, en [localhost:8788](http://127
 
 ## Publicar en Cloudflare
 
-Se usa exclusivamente `cf`. `cloudflare.config.ts` declara Worker, assets, Durable Object SQLite y R2. `npm run build` genera el Build Output utilizado por `cf deploy --prebuilt`.
+Se usa exclusivamente `cf`. `cloudflare.config.ts` declara Worker, assets y Durable Object SQLite, sin R2 ni servicios que requieran activar facturación. `DAEDALUS_ENVIRONMENT=staging` selecciona el Worker de pruebas al empaquetar. `npm run build` genera el Build Output utilizado por `cf deploy --prebuilt`.
 
 1. Inicia sesión: `npm run cf -- auth login`.
 2. Configura una aplicación **Cloudflare Access** en el dominio de Daedalus, con una política Allow limitada a tu correo y una política **Service Auth** para los conectores y clientes MCP. Usa credenciales de servicio distintas y revocables para cada cliente. No publiques el servidor local mediante un túnel.
 3. Define `ACCESS_TEAM_DOMAIN`, `ACCESS_AUD` y `OWNER_EMAIL` en el entorno de compilación. La aplicación verifica el JWT de Access y falla cerrada si falta esta configuración.
-4. Ejecuta `npm run build`, después `npm run deploy:preview` y revisa los recursos. Publica con `npm run cf -- deploy --prebuilt`. `cf` puede provisionar el bucket R2 y el Durable Object; el uso se factura según tu cuenta de Cloudflare.
+4. Ejecuta `npm run build`, después `npm run deploy:preview` y revisa los recursos. Para la instalación inicial publica con `npm run cf -- deploy --prebuilt`. El despliegue solo provisiona el namespace SQLite; mantén la cuenta en Workers Free. Los cambios posteriores pasan por PR, CI, staging y la aprobación de publicación en Daedalus.
 5. Cambia `serverUrl` en el conector a la URL HTTPS publicada. Proporciona localmente `CF_ACCESS_CLIENT_ID` y `CF_ACCESS_CLIENT_SECRET`, además de `DAEDALUS_CONNECTOR_TOKEN`, para pasar la política Service Auth.
 
 El primer acceso del propietario permite crear las credenciales de Daedalus desde el panel. Las credenciales de motores permanecen en el equipo local.
@@ -95,6 +99,6 @@ Herramientas: `get_context`, `propose_plan`, `get_run` y `record_observation`. N
 
 `skills-lock.json` fija las cinco fuentes solicitadas por commit: Superpowers, Taste Skill, Remotion, Benji Taylor y Impeccable. `skills:sync` descarga el contenido original sin ejecutar instaladores y conserva licencias y recursos. El cargador verifica el commit y los cambios de los archivos antes de inyectar contexto. Los modelos solo reciben las skills seleccionadas y sus referencias enlazadas.
 
-Para archivar recursos en R2, define `DAEDALUS_SERVER_URL`, `DAEDALUS_CONNECTOR_TOKEN` y las credenciales Service Auth y ejecuta `npm run skills:sync -- --upload`. Cambiar una revisión es una actualización explícita del lock.
+Las fuentes completas permanecen localmente y el lock registra sus revisiones. Los artefactos de texto pequeños se guardan en SQLite; los grandes permanecen locales. Cambiar una revisión de skill es una actualización explícita del lock.
 
 Consulta [arquitectura y recuperación](docs/architecture.md). Datos de ejecución, credenciales, worktrees y reportes locales están en `.daedalus/`, excluido de Git.
