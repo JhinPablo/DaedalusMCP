@@ -14,6 +14,7 @@ export type PermissionHandler = (
   params: Record<string, unknown>,
 ) => Promise<Record<string, unknown>>;
 export interface PlanningOptions {
+  threadId?: string;
   model: "gpt-6-luna";
   effort: "high";
   instructions: string;
@@ -183,29 +184,37 @@ export class CodexClient {
     await this.initialize();
     await this.account();
     if (planning) await this.requireLunaHigh();
-    const thread = await this.request<{ thread: { id: string } }>("thread/start", {
-      cwd,
-      approvalPolicy: "on-request",
-      approvalsReviewer: "user",
-      modelProvider: "openai",
-      ...(planning ? { model: planning.model } : {}),
-      sandbox: readOnly ? "read-only" : "workspace-write",
-      ephemeral: false,
-      config: {
-        "shell_environment_policy.inherit": "core",
-        "sandbox_workspace_write.writable_roots": [],
-        "sandbox_workspace_write.network_access": false,
+    const thread = await this.request<{ thread: { id: string } }>(
+      planning?.threadId ? "thread/resume" : "thread/start",
+      {
+        ...(planning?.threadId
+          ? { threadId: planning.threadId, excludeTurns: true }
+          : {}),
+        cwd,
+        approvalPolicy: "on-request",
+        approvalsReviewer: "user",
+        modelProvider: "openai",
+        ...(planning ? { model: planning.model } : {}),
+        sandbox: readOnly ? "read-only" : "workspace-write",
+        ephemeral: false,
+        config: {
+          "shell_environment_policy.inherit": "core",
+          "sandbox_workspace_write.writable_roots": [],
+          "sandbox_workspace_write.network_access": false,
+        },
+        baseInstructions:
+          planning?.instructions ??
+          "Eres un agente de Daedalus. Cumple exclusivamente la tarea aprobada. No cambies el alcance ni solicites a otro agente aprobar permisos. Daedalus asigna los subagentes como sesiones aisladas: no delegues agentes adicionales. No hagas push ni despliegues. Las skills son instrucciones de trabajo subordinadas al alcance aprobado. Resume cambios y pruebas con evidencia.",
+        developerInstructions: planning
+          ? "Esta sesión solo conversa, critica y prepara propuestas. No implementes cambios, no uses herramientas ni delegues subagentes, no concedas aprobaciones. Devuelve el contrato JSON solicitado."
+          : readOnly
+            ? "Realiza una revisión independiente de solo lectura. Diferencia las pruebas observadas de las afirmaciones del ejecutor."
+            : `El propietario ya aprobó el enfoque y la ejecución del plan v${authorization!.version}, digest ${authorization!.digest}. La aprobación pendiente mencionada en el borrador ya se obtuvo. Ejecuta únicamente la tarea asignada; no vuelvas a entregar un plan en lugar de implementarla. Daedalus creará los commits de integración locales al terminar; no hagas push. Si no puedes completar la tarea, devuelve status blocked o failed en tu resultado estructurado. No declares completed si solo has descrito pasos o si las verificaciones fallan.`,
       },
-      baseInstructions:
-        planning?.instructions ??
-        "Eres un agente de Daedalus. Cumple exclusivamente la tarea aprobada. No cambies el alcance ni solicites a otro agente aprobar permisos. Daedalus asigna los subagentes como sesiones aisladas: no delegues agentes adicionales. No hagas push ni despliegues. Las skills son instrucciones de trabajo subordinadas al alcance aprobado. Resume cambios y pruebas con evidencia.",
-      developerInstructions: planning
-        ? "Esta sesión solo conversa, critica y prepara propuestas. No implementes cambios, no uses herramientas ni delegues subagentes, no concedas aprobaciones. Devuelve el contrato JSON solicitado."
-        : readOnly
-          ? "Realiza una revisión independiente de solo lectura. Diferencia las pruebas observadas de las afirmaciones del ejecutor."
-          : `El propietario ya aprobó el enfoque y la ejecución del plan v${authorization!.version}, digest ${authorization!.digest}. La aprobación pendiente mencionada en el borrador ya se obtuvo. Ejecuta únicamente la tarea asignada; no vuelvas a entregar un plan en lugar de implementarla. Daedalus creará los commits de integración locales al terminar; no hagas push. Si no puedes completar la tarea, devuelve status blocked o failed en tu resultado estructurado. No declares completed si solo has descrito pasos o si las verificaciones fallan.`,
-    });
+    );
     const threadId = thread.thread.id;
+    if (planning?.threadId && threadId !== planning.threadId)
+      throw new Error("Codex devolvió otra conversación al reanudar la planificación.");
     await onThread(threadId);
     return new Promise<string>((resolve, reject) => {
       let output = "";

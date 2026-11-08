@@ -5,6 +5,7 @@ import { loadConfig } from "./config";
 import { CodexClient } from "./codex";
 import { OpenCodeClient } from "./opencode";
 import { planWithFallback, planWithLuna } from "./planning";
+import { loadPlanningSession } from "./planning-session";
 import { Worktrees } from "./worktrees";
 import { projectContext } from "./context";
 import { taskReport, ExecutionOutcomeError } from "./outcome";
@@ -242,12 +243,21 @@ async function execute(run: AgentRun, relatedRuns: AgentRun[]) {
       run.externalSessionId = externalSessionId;
       await save(journal);
       await api("/api/runs/" + run.id + "/event", {
-        message: "Sesión local iniciada.",
+        message: "Conversación local conectada.",
         externalSessionId,
         model: run.model,
       });
     };
     if (run.kind === "planning") {
+      const deepseekSession = await loadPlanningSession(
+        root,
+        run,
+        "OpenCode · DeepSeek V4.1 Flash Free",
+      );
+      const lunaSession =
+        config.planningFallback === "luna-high"
+          ? await loadPlanningSession(root, run, "GPT-6 Luna · alto")
+          : undefined;
       run.model = "OpenCode · DeepSeek V4.1 Flash Free";
       const planningPrompt =
         run.prompt +
@@ -258,7 +268,14 @@ async function execute(run: AgentRun, relatedRuns: AgentRun[]) {
         "\n\n" +
         skills;
       const result = await planWithFallback(
-        () => openCode.plan(planningPrompt, project.root, controller.signal, onSession),
+        () =>
+          openCode.plan(
+            planningPrompt,
+            project.root,
+            controller.signal,
+            onSession,
+            deepseekSession,
+          ),
         config.planningFallback === "luna-high"
           ? async () => {
               client = new CodexClient(config.codexCommand, project.root, async () => ({
@@ -270,12 +287,14 @@ async function execute(run: AgentRun, relatedRuns: AgentRun[]) {
                 project.root,
                 controller.signal,
                 onSession,
+                lunaSession,
               );
             }
           : undefined,
         controller.signal,
         async (reason) => {
           run.model = "GPT-6 Luna · alto";
+          run.externalSessionId = undefined;
           planningModel = "gpt-6-luna · alto";
           try {
             await openCode.available();
