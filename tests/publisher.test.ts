@@ -56,3 +56,16 @@ it("publishes an already merged exact main candidate without creating an empty P
   ).resolves.toBe(true);
   expect(command).not.toHaveBeenCalled();
 });
+it("does not require the old staging base to authorize an approved rollback", async () => {
+  await expect(
+    ensureRepositoryPr(
+      "JhinPablo/DaedalusMCP",
+      {
+        ...candidate,
+        error: "rollback-requested",
+      },
+      process.cwd(),
+    ),
+  ).resolves.toBe(true);
+  expect(command).not.toHaveBeenCalled();
+});

@@ -82,7 +82,11 @@ export async function ensureRepositoryPr(
   release: ReleaseCandidate,
   cwd: string,
 ) {
-  if (release.kind !== "repository" || release.commit === release.baseCommit)
+  if (
+    release.error === "rollback-requested" ||
+    release.kind !== "repository" ||
+    release.commit === release.baseCommit
+  )
     return true;
   const [main, staging] = await Promise.all([
     gh<{ sha: string }>(repository, ["api", `repos/${repository}/commits/main`], cwd),
