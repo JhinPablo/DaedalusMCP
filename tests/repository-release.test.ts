@@ -40,7 +40,7 @@ it("lets the scoped publisher discover candidates but never approve them", async
     publisher,
   );
   expect(list.status).toBe(200);
-  expect((await list.json())[0].id).toBe(candidate.id);
+  expect(((await list.json()) as Array<{ id: string }>)[0].id).toBe(candidate.id);
   expect(
     (
       await service.handle(new Request("https://test/api/releases"), {
