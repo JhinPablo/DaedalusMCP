@@ -25,6 +25,20 @@ export class Worktrees {
       throw new Error(
         "El proyecto tiene cambios sin guardar en Git. Crea un commit o conserva esos cambios antes de ejecutar; Daedalus no los modificará.",
       );
+    if ((await git(this.root, "branch", "--show-current")) === "staging") {
+      const remote = await git(this.root, "remote", "get-url", "origin");
+      if (
+        [
+          "https://github.com/JhinPablo/DaedalusMCP",
+          "https://github.com/JhinPablo/DaedalusMCP.git",
+          "git@github.com:JhinPablo/DaedalusMCP.git",
+        ].includes(remote)
+      ) {
+        await git(this.root, "fetch", "origin", "main", "staging");
+        await git(this.root, "merge", "--ff-only", "origin/main");
+        await git(this.root, "merge", "--ff-only", "origin/staging");
+      }
+    }
     return git(this.root, "rev-parse", "HEAD");
   }
   async prepare(runId: string, base: string, branches: string[]) {
@@ -38,12 +52,9 @@ export class Worktrees {
       try {
         await git(
           target,
-          "-c",
-          "user.name=Daedalus",
-          "-c",
-          "user.email=daedalus@localhost",
           "merge",
-          "--no-edit",
+          "-m",
+          "✨feat: integrate approved task dependencies",
           "--no-ff",
           dependency,
         );
@@ -59,16 +70,7 @@ export class Worktrees {
     const status = await git(worktree, "status", "--porcelain");
     if (status) {
       await git(worktree, "add", "--all");
-      await git(
-        worktree,
-        "-c",
-        "user.name=Daedalus",
-        "-c",
-        "user.email=daedalus@localhost",
-        "commit",
-        "-m",
-        "Daedalus: tarea aprobada",
-      );
+      await git(worktree, "commit", "-m", "✨feat: implement approved Daedalus task");
     }
     return {
       changes: status
