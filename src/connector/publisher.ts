@@ -77,6 +77,59 @@ async function gh<T>(repository: string, args: string[], cwd: string): Promise<T
   });
   return JSON.parse(result.stdout || "null") as T;
 }
+export async function ensureRepositoryPr(
+  repository: string,
+  release: ReleaseCandidate,
+  cwd: string,
+) {
+  if (release.kind !== "repository" || release.commit === release.baseCommit)
+    return true;
+  const [main, staging] = await Promise.all([
+    gh<{ sha: string }>(repository, ["api", `repos/${repository}/commits/main`], cwd),
+    gh<{ sha: string }>(
+      repository,
+      ["api", `repos/${repository}/commits/staging`],
+      cwd,
+    ),
+  ]);
+  if (main.sha !== release.baseCommit || staging.sha !== release.commit) return false;
+  const prs = await gh<Array<{ number: number }>>(
+    repository,
+    [
+      "pr",
+      "list",
+      "--repo",
+      repository,
+      "--head",
+      "staging",
+      "--base",
+      "main",
+      "--json",
+      "number",
+    ],
+    cwd,
+  );
+  if (!prs.length)
+    await exec(
+      "gh",
+      [
+        "pr",
+        "create",
+        "--repo",
+        repository,
+        "--head",
+        "staging",
+        "--base",
+        "main",
+        "--title",
+        "✨feat: promote tested staging changes",
+        "--body",
+        "Tested staging changes. Production publication requires the owner's approval of the exact commit and artifact in Daedalus.",
+      ],
+      { cwd, windowsHide: true },
+    );
+  return true;
+}
 export async function publishReviews(
   repository: string,
   root: string,
@@ -88,6 +141,15 @@ export async function publishReviews(
 ) {
   const journal = path.join(root, "..", "publisher");
   await mkdir(journal, { recursive: true });
+  const repositorySources = new Map<string, boolean>();
+  for (const release of releases.filter(
+    (r) => r.kind === "repository" && ["ready", "approved"].includes(r.status),
+  )) {
+    repositorySources.set(
+      release.id,
+      await ensureRepositoryPr(repository, release, process.cwd()),
+    );
+  }
   for (const review of reviews) {
     if (
       !review.worktree ||
@@ -201,6 +263,7 @@ export async function publishReviews(
     }
   }
   for (const release of releases.filter((r) => r.status === "approved")) {
+    if (repositorySources.get(release.id) === false) continue;
     const file = path.join(
       journal,
       "release-" +

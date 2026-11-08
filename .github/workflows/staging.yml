@@ -6,7 +6,7 @@ on:
 permissions:
   contents: read
   actions: read
-  pull-requests: write
+  pull-requests: read
 concurrency:
   group: daedalus-staging
   cancel-in-progress: false

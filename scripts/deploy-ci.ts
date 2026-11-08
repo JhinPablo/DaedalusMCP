@@ -103,21 +103,25 @@ async function download(runId: string, destination: string) {
   ]);
 }
 async function verifyProduction(commit: string) {
-  for (let attempt = 0; attempt < 10; attempt++) {
-    const response = await fetch(process.env.PRODUCTION_URL + "/api/version", {
-      headers: {
-        Authorization: "Bearer " + process.env.PRODUCTION_DAEDALUS_CI_TOKEN,
-        "CF-Access-Client-Id": process.env.PRODUCTION_ACCESS_CLIENT_ID ?? "",
-        "CF-Access-Client-Secret": process.env.PRODUCTION_ACCESS_CLIENT_SECRET ?? "",
-      },
-      signal: AbortSignal.timeout(10000),
-    });
-    if (
-      response.ok &&
-      ((await response.json()) as { buildId: string }).buildId === commit
-    )
-      return;
-    await new Promise((resolve) => setTimeout(resolve, 3000));
+  for (let attempt = 0; attempt < 20; attempt++) {
+    try {
+      const response = await fetch(process.env.PRODUCTION_URL + "/api/version", {
+        headers: {
+          Authorization: "Bearer " + process.env.PRODUCTION_DAEDALUS_CI_TOKEN,
+          "CF-Access-Client-Id": process.env.PRODUCTION_ACCESS_CLIENT_ID ?? "",
+          "CF-Access-Client-Secret": process.env.PRODUCTION_ACCESS_CLIENT_SECRET ?? "",
+        },
+        signal: AbortSignal.timeout(10000),
+      });
+      if (
+        response.ok &&
+        ((await response.json()) as { buildId: string }).buildId === commit
+      )
+        return;
+    } catch {
+      // Retry only this read; never replay the deployment after a network failure.
+    }
+    await new Promise((resolve) => setTimeout(resolve, 6000));
   }
   throw new Error(
     "Production does not serve the approved build; reconcile before retrying",
@@ -294,20 +298,9 @@ try {
       const prs = await gh<Array<{ number: number; html_url: string }>>(
         `repos/${repository}/pulls?state=open&head=JhinPablo:staging&base=main`,
       );
-      const pr =
-        prs[0] ??
-        (await gh<{ number: number; html_url: string }>(
-          `repos/${repository}/pulls`,
-          "POST",
-          {
-            head: "staging",
-            base: "main",
-            title: "✨feat: promote tested staging changes",
-            body: "Tested staging changes. Production deployment requires approval of the exact commit and artifact in Daedalus.",
-          },
-        ));
-      r.prNumber = pr.number;
-      r.prUrl = pr.html_url;
+      // A preview must not depend on Actions being allowed to create or approve PRs.
+      r.prNumber = prs[0]?.number;
+      r.prUrl = prs[0]?.html_url;
     }
     const prepared = await stagingApi<ReleaseCandidate>("/releases/repository", {
       repository,
@@ -385,6 +378,22 @@ try {
         if (!pr) throw new Error("Missing reviewed staging PR for the approved source");
         prNumber = pr.number;
       }
+      await exec(
+        "gh",
+        [
+          "pr",
+          "checks",
+          String(prNumber),
+          "--repo",
+          repository,
+          "--required",
+          "--watch",
+          "--fail-fast",
+          "--interval",
+          "10",
+        ],
+        { timeout: 180000 },
+      );
       publicationStarted = true;
       const merged = await gh<{ sha: string; merged: boolean }>(
         `repos/${repository}/pulls/${prNumber}/merge`,
@@ -417,7 +426,7 @@ try {
       "CF-Access-Client-Secret": process.env.STAGING_ACCESS_CLIENT_SECRET ?? "",
     };
     let ready = false;
-    for (let attempt = 0; attempt < 10; attempt++) {
+    for (let attempt = 0; attempt < 20; attempt++) {
       try {
         const response = await fetch(process.env.STAGING_URL + "/api/version", {
           headers: probeHeaders,
@@ -431,7 +440,7 @@ try {
           break;
         }
       } catch {}
-      await new Promise((resolve) => setTimeout(resolve, 3000));
+      await new Promise((resolve) => setTimeout(resolve, 6000));
     }
     if (!ready)
       throw new Error(
