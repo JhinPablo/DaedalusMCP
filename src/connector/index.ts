@@ -5,7 +5,7 @@ import { loadConfig } from "./config";
 import { CodexClient } from "./codex";
 import { OpenCodeClient } from "./opencode";
 import { planWithFallback, planWithLuna } from "./planning";
-import { loadPlanningSession } from "./planning-session";
+import { loadPlanningSession, isRunJournalFile } from "./planning-session";
 import { Worktrees } from "./worktrees";
 import { projectContext } from "./context";
 import { taskReport, ExecutionOutcomeError } from "./outcome";
@@ -489,7 +489,7 @@ async function execute(run: AgentRun, relatedRuns: AgentRun[]) {
   }
 }
 async function reconcile() {
-  for (const name of (await readdir(root)).filter((n) => n.endsWith(".json"))) {
+  for (const name of (await readdir(root)).filter(isRunJournalFile)) {
     const j = JSON.parse(await readFile(path.join(root, name), "utf8")) as Journal;
     if (active.has(j.run.id)) continue;
     if (j.stage === "started") {

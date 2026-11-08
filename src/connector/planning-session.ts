@@ -7,6 +7,7 @@ export interface PlanningJournal {
   stage: "started" | "finished";
   outcome?: { status?: unknown };
 }
+export const isRunJournalFile = (file: string) => /^[a-f0-9-]{36}\.json$/.test(file);
 
 export function previousPlanningSession(
   journals: PlanningJournal[],
@@ -45,7 +46,7 @@ export async function loadPlanningSession(root: string, run: AgentRun, model: st
     if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
   }
   for (const file of await readdir(root)) {
-    if (!/^[a-f0-9-]{36}\.json$/.test(file)) continue;
+    if (!isRunJournalFile(file)) continue;
     // Corrupt execution evidence must not silently create a replacement conversation.
     journals.push(JSON.parse(await readFile(path.join(root, file), "utf8")));
   }

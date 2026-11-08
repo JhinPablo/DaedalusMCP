@@ -1,8 +1,14 @@
 import { expect, it, vi } from "vitest";
 import {
+  isRunJournalFile,
   previousPlanningSession,
   type PlanningJournal,
 } from "../src/connector/planning-session";
+it("excludes imported planning references from execution reconciliation", () => {
+  expect(isRunJournalFile("planning-history.json")).toBe(false);
+  expect(isRunJournalFile("settings.json")).toBe(false);
+  expect(isRunJournalFile("29850e6d-a49b-46df-a78c-1011aa7093d2.json")).toBe(true);
+});
 import { CodexClient } from "../src/connector/codex";
 import { planWithLuna } from "../src/connector/planning";
 import type { AgentRun } from "../src/shared/model";
