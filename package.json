@@ -29,6 +29,7 @@
     "@modelcontextprotocol/sdk": "1.32.2",
     "@noble/hashes": "^2.0.0",
     "@opencode-ai/sdk": "latest",
+    "@remotion/player": "4.0.541",
     "@xyflow/react": "^12.10.0",
     "jose": "^6.1.0",
     "lucide-react": "^0.468.0",
@@ -36,6 +37,7 @@
     "react-dom": "^19.2.0",
     "react-markdown": "^10.1.0",
     "remark-gfm": "^4.0.1",
+    "remotion": "4.0.541",
     "ws": "^8.18.0",
     "zod": "^4.1.0"
   },

@@ -1,0 +1,11 @@
+{
+  "id": "/",
+  "name": "Daedalus",
+  "short_name": "Daedalus",
+  "lang": "es",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#f1f3f3",
+  "theme_color": "#f1f3f3"
+}

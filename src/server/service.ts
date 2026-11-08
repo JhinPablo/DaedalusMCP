@@ -543,11 +543,45 @@ export class Service {
         const run = this.mutate((e) => e.retryPreflight(p, retryRoute[1]));
         return Response.json({ ok: true, run });
       }
-      const runRoute = path.match(/^\/api\/runs\/([^/]+)\/(finish|event|permission)$/);
+      const runRoute = path.match(
+        /^\/api\/runs\/([^/]+)\/(finish|event|permission|progress)$/,
+      );
       if (method === "POST" && runRoute) {
         const runId = runRoute[1],
           action = runRoute[2],
           body = await readJson(request);
+        if (action === "progress") {
+          const data = z
+            .object({ commit: z.string().regex(/^[a-f0-9]{40}$/) })
+            .parse(body);
+          this.mutate((e) => {
+            const run = e.run(runId);
+            e.assigned(p, run);
+            if (
+              run.kind !== "task" ||
+              run.status !== "completed" ||
+              !run.branch ||
+              !/^daedalus\/[a-zA-Z0-9_-]+$/.test(run.branch)
+            )
+              throw new DomainError(
+                409,
+                "La tarea no tiene cambios finalizados para compartir.",
+              );
+            const session = e.session(run.sessionId),
+              id = `task-progress:${run.id}:${data.commit}`;
+            if (session.messages.some((m) => m.id === id)) return;
+            const title =
+              session.tasks.find((t) => t.id === run.taskId)?.title ??
+              "Tarea completada";
+            session.messages.push({
+              id,
+              role: "assistant",
+              createdAt: new Date().toISOString(),
+              content: `**${title}**\n\nCambios guardados en la rama \`${run.branch}\`, commit \`${data.commit.slice(0, 8)}\`. [Ver cambios de esta tarea](https://github.com/JhinPablo/DaedalusMCP/commit/${data.commit}).\n\nLa preview integrada llegará al terminar el plan, la revisión y las pruebas.`,
+            });
+          });
+          return Response.json({ ok: true });
+        }
         if (action === "finish") {
           const data = completion.parse(body);
           const before = new Engine(this.repo.read()),

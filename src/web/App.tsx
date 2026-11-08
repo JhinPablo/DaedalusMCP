@@ -42,6 +42,10 @@ import type {
 import { request, useWorkspace } from "./api";
 import { readLocal, writeLocal, useLocalText } from "./persistence";
 import { Releases } from "./Releases";
+import { BrowserNotifications } from "./BrowserNotifications";
+import { PreviewIdentity } from "./PreviewIdentity";
+import { Appearance } from "./Appearance";
+import { PermissionDetails, permissionDescription } from "./PermissionDetails";
 import { canRetryPreflight } from "../shared/run-state";
 import { Flow, WorkflowGuide } from "./Flow";
 import skillLock from "../../skills-lock.json";
@@ -98,16 +102,20 @@ function Empty({ title, children }: { title: string; children: ReactNode }) {
 }
 export function App() {
   const closeModal = useCallback(() => setModal(null), []);
-  const { state, error, refresh, updateAvailable } = useWorkspace();
+  const { state, error, refresh, updateAvailable, deployedBuildId } = useWorkspace();
   const [page, setPage] = useState<Page>(() =>
       location.hash === "#releases" ? "releases" : "workshop",
     ),
     [sessionId, setSessionId] = useState<string | undefined>(() =>
-      readLocal("selected-session", undefined),
+      /^#chat\/[a-zA-Z0-9-]{1,100}$/.test(location.hash)
+        ? location.hash.slice(6)
+        : readLocal("selected-session", undefined),
     ),
     [projectFilter, setProjectFilter] = useState(""),
     [newChat, setNewChat] = useState(
-      () => readLocal<string>("selected-session", "") === "__new__",
+      () =>
+        !location.hash.startsWith("#chat/") &&
+        readLocal<string>("selected-session", "") === "__new__",
     ),
     [selected, setSelected] = useState<string>();
   const [modal, setModal] = useState<"create" | "branch" | "edit" | null>(null),
@@ -194,6 +202,8 @@ export function App() {
     setMobileNav(false);
   };
   const runs = state?.runs.filter((r) => r.sessionId === session?.id) ?? [];
+  const sessionReleases =
+    state?.releases.filter((r) => r.sessionId === session?.id) ?? [];
   const planningConnector = state?.connectors.find(
     (c) => c.id === state.projects.find((p) => p.id === targetProject)?.connectorId,
   );
@@ -390,11 +400,13 @@ export function App() {
             </span>
           </div>
           <div className="topbar-right">
+            <Appearance />
             <ShieldCheck size={15} />
             <span>Aprobación humana</span>
             <button
               className="icon-button"
               aria-label="Actualizar estado"
+              title={error ? "Sin conexión con el servidor" : "Estado sincronizado"}
               onClick={() => void refresh()}
             >
               <RefreshCw size={15} />
@@ -402,6 +414,17 @@ export function App() {
           </div>
         </header>
         <main className={"sheet " + (page === "workshop" ? "chat-sheet" : "")}>
+          <PreviewIdentity deployedBuildId={deployedBuildId} />
+          <BrowserNotifications
+            state={state}
+            openSession={(id) => {
+              if (!state?.sessions.some((s) => s.id === id)) return;
+              setSessionId(id);
+              setNewChat(false);
+              setPage("workshop");
+              setSupportPanel("activity");
+            }}
+          />
           {updateAvailable && (
             <div className="notice" role="status">
               Hay una nueva versión de Daedalus. Tu borrador está guardado.
@@ -594,6 +617,75 @@ export function App() {
                                 </div>
                               </article>
                             ))}
+                            {pending
+                              .filter((p) => runs.some((r) => r.id === p.runId))
+                              .map((p) => (
+                                <PermissionCard
+                                  key={p.id}
+                                  permission={p}
+                                  busy={busy}
+                                  act={act}
+                                />
+                              ))}
+                            {sessionReleases.map((release) => (
+                              <article
+                                className="chat-delivery"
+                                key={release.id}
+                                aria-label="Entrega del cambio"
+                              >
+                                <strong>
+                                  {release.status === "ready"
+                                    ? "Tu vista previa está lista"
+                                    : release.status === "published"
+                                      ? "Cambio publicado"
+                                      : release.status === "superseded"
+                                        ? "Candidato reemplazado"
+                                        : release.status === "failed"
+                                          ? "No se pudo preparar la vista previa"
+                                          : "Preparando tu cambio"}
+                                </strong>
+                                <p>
+                                  Rama <code>{release.branch}</code> · commit{" "}
+                                  <code>{release.commit.slice(0, 8)}</code>
+                                </p>
+                                <div className="button-row">
+                                  {release.prUrl && (
+                                    <a
+                                      href={release.prUrl + "/files"}
+                                      target="_blank"
+                                      rel="noreferrer"
+                                    >
+                                      Ver cambios del PR #{release.prNumber}
+                                    </a>
+                                  )}
+                                  {release.previewUrl &&
+                                    ["ready", "approved", "publishing"].includes(
+                                      release.status,
+                                    ) && (
+                                      <a
+                                        href={release.previewUrl}
+                                        target="_blank"
+                                        rel="noreferrer"
+                                      >
+                                        Abrir preview verificada
+                                      </a>
+                                    )}
+                                  <button
+                                    className="text-button"
+                                    onClick={() => nav("releases")}
+                                  >
+                                    Ver publicación
+                                  </button>
+                                </div>
+                                {release.status === "superseded" && (
+                                  <p>
+                                    El staging compartido está reservado para otro
+                                    candidato. El PR conserva estos cambios.
+                                  </p>
+                                )}
+                                {release.error && <p role="alert">{release.error}</p>}
+                              </article>
+                            ))}
                             {!session && (
                               <article className="chat-welcome">
                                 <Mark />
@@ -725,10 +817,6 @@ export function App() {
                           </button>
                         )}
                       </form>
-                      <p className="composer-note">
-                        <ShieldCheck size={13} /> Tú apruebas el plan antes de que Codex
-                        ejecute cambios.
-                      </p>
                     </section>
                     {supportPanel && (
                       <aside
@@ -1276,13 +1364,6 @@ export function App() {
             </>
           )}
         </main>
-        <footer className="app-footer">
-          <span>Ingenio, con intención.</span>
-          <span>
-            <span className={"status-dot " + (error ? "" : "online")} />
-            {error ? "Sin conexión con el servidor" : "Estado sincronizado"}
-          </span>
-        </footer>
       </div>
       {modal && state && (
         <Modal
@@ -1567,7 +1648,7 @@ function PermissionCard({
           {question ? "Codex necesita una respuesta" : "Codex solicita tu autorización"}
         </h2>
       </div>
-      <p>{permission.description}</p>
+      <p>{permissionDescription(permission.description)}</p>
       {questions.map((q) => (
         <label key={q.id}>
           {q.question}
@@ -1598,8 +1679,9 @@ function PermissionCard({
           )}
         </label>
       ))}
+      <PermissionDetails details={permission.details} />
       <details>
-        <summary>Ver operación y alcance</summary>
+        <summary>Ver datos técnicos originales (JSON)</summary>
         <pre>{JSON.stringify(permission.details, null, 2)}</pre>
       </details>
       {permission.method === "item/permissions/requestApproval" && (

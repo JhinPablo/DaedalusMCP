@@ -1,0 +1,149 @@
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --ground: #101923;
+  --surface: #192531;
+  --raised: #223240;
+  --active: #2d4353;
+  --border: #344654;
+  --rule: #2b3c49;
+  --control: #607584;
+  --text: #edf3f7;
+  --muted: #b6c5ce;
+  --accent: #8bc9df;
+  --positive: #8dd3ad;
+  --negative: #ffada9;
+}
+:root[data-theme="light"] {
+  color-scheme: light;
+}
+:root {
+  color: var(--text);
+  background: var(--ground);
+}
+body {
+  background: var(--ground);
+}
+button,
+input,
+textarea,
+select,
+.sheet {
+  background: var(--surface);
+}
+input::placeholder,
+textarea::placeholder {
+  color: var(--muted);
+}
+.nav-link,
+.nav-link svg,
+.topbar,
+.breadcrumb > span:last-child,
+.footnote,
+.avatar {
+  color: var(--muted);
+}
+.nav-link:hover {
+  background: var(--raised);
+}
+.nav-link.active {
+  color: var(--text);
+}
+.appearance-menu {
+  position: relative;
+  z-index: 30;
+}
+.appearance-menu > summary {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  min-width: 34px;
+  min-height: 34px;
+  list-style: none;
+}
+.appearance-menu > summary::-webkit-details-marker {
+  display: none;
+}
+.appearance-menu > summary:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+}
+.appearance-settings {
+  position: absolute;
+  right: 0;
+  top: 40px;
+  width: min(320px, calc(100vw - 32px));
+  padding: 20px;
+  background: var(--surface);
+  color: var(--text);
+  border: 1px solid var(--control);
+  border-radius: 6px;
+  box-shadow: 0 8px 24px #0002;
+}
+.appearance-settings p {
+  font-size: 12px;
+  color: var(--muted);
+}
+.appearance-settings input[type="range"] {
+  padding: 0;
+  accent-color: var(--accent);
+}
+.appearance-settings output {
+  float: right;
+  font-family: "IBM Plex Mono", monospace;
+}
+.appearance-settings .motion-setting {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.appearance-settings .motion-setting input {
+  width: auto;
+  margin: 0;
+}
+:root[data-theme="dark"] :is(button:disabled, .composer textarea:disabled) {
+  color: var(--muted);
+  background: var(--raised);
+  border-color: var(--border);
+}
+:root[data-theme="dark"] :is(.error-banner, .chat-error, .permission-card) {
+  background: #2e2530;
+  color: var(--text);
+  border-color: #a37e70;
+}
+:root[data-theme="dark"] :is(.primary, button.primary) {
+  background: var(--text);
+  color: var(--ground);
+  border-color: var(--text);
+}
+:root[data-theme="dark"] .chat-sheet .heading-actions .primary {
+  background: transparent;
+  color: var(--text);
+  border-color: var(--control);
+}
+:root[data-theme="dark"] .composer button[type="submit"] {
+  color: var(--ground);
+}
+:root[data-theme="dark"] .react-flow {
+  --xy-background-color: var(--ground);
+  --xy-node-background-color: var(--surface);
+  --xy-node-color: var(--text);
+  --xy-controls-button-background-color: var(--surface);
+  --xy-controls-button-color: var(--text);
+}
+@media (forced-colors: active) {
+  :root {
+    --ground: Canvas;
+    --surface: Canvas;
+    --raised: Canvas;
+    --active: Highlight;
+    --text: CanvasText;
+    --muted: CanvasText;
+    --accent: LinkText;
+    --control: ButtonBorder;
+    --border: ButtonBorder;
+  }
+  .appearance-settings {
+    box-shadow: none;
+  }
+}

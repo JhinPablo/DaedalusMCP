@@ -36,7 +36,7 @@ const service = new Service(
 const vite = await createViteServer({
   configFile: false,
   plugins: [react()],
-  server: { middlewareMode: true, hmr: false },
+  server: { middlewareMode: true, hmr: false, watch: null },
   appType: "spa",
 });
 createServer(async (req, res) => {

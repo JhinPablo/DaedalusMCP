@@ -11,7 +11,7 @@ import { taskReport, ExecutionOutcomeError } from "./outcome";
 import { loadSkills, skillCatalog, type SkillEntry } from "./skills";
 import type { AgentRun, PermissionRequest } from "../shared/model";
 import type { ReleaseCandidate } from "../shared/model";
-import { publishReviews } from "./publisher";
+import { publishReviews, publishTaskProgress } from "./publisher";
 
 interface Journal {
   run: AgentRun;
@@ -408,6 +408,23 @@ async function execute(run: AgentRun, relatedRuns: AgentRun[]) {
         localArtifactPath: path.join(root, run.id + ".json"),
       });
       log(`Finalizada ${run.id}: ${String(journal.outcome?.status)}`);
+      if (
+        config.publishRepository &&
+        run.kind === "task" &&
+        journal.outcome?.status === "completed"
+      ) {
+        try {
+          await publishTaskProgress(
+            config.publishRepository,
+            root,
+            { ...run, ...journal.outcome } as AgentRun,
+            api,
+          );
+        } catch (error) {
+          log(String(error));
+          await api(`/api/runs/${run.id}/event`, { message: String(error) });
+        }
+      }
     } catch {
       log(`Resultado conservado localmente para reconciliar: ${run.id}`);
     }

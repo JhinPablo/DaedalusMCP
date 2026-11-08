@@ -78,10 +78,17 @@ export function Releases({
                   Revisar PR #{r.prNumber} <ExternalLink size={13} />
                 </a>
               )}
-              {r.previewUrl && (
-                <a href={r.previewUrl} target="_blank" rel="noreferrer">
-                  Abrir vista previa <ExternalLink size={13} />
-                </a>
+              {r.previewUrl &&
+                ["ready", "approved", "publishing"].includes(r.status) && (
+                  <a href={r.previewUrl} target="_blank" rel="noreferrer">
+                    Abrir vista previa <ExternalLink size={13} />
+                  </a>
+                )}
+              {r.status === "superseded" && (
+                <span>
+                  El staging ya no representa este candidato. Los cambios siguen
+                  disponibles en el PR.
+                </span>
               )}
             </div>
             {r.artifactDigest && (
