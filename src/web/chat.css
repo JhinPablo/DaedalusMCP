@@ -593,3 +593,79 @@
     max-height: 42dvh;
   }
 }
+/* Operational information remains readable inside the conversation on phones. */
+.browser-notifications {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 20px;
+  flex-wrap: wrap;
+}
+.browser-notifications small {
+  color: var(--muted);
+  flex: 1;
+  min-width: 180px;
+}
+.permission-fields {
+  margin: 0;
+  display: grid;
+  gap: 12px;
+}
+.permission-fields > div {
+  min-width: 0;
+}
+.permission-fields dt {
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+.permission-fields dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.permission-fields .permission-fields {
+  padding-left: 12px;
+  border-left: 2px solid var(--control);
+}
+.permission-details {
+  margin: 16px 0;
+  padding: 14px;
+  background: var(--raised);
+}
+.permission-details ul {
+  padding-left: 20px;
+  margin: 0;
+}
+.chat-delivery {
+  padding: 20px 0;
+  border-top: 1px solid var(--border);
+  overflow-wrap: anywhere;
+}
+.chat-delivery p {
+  margin: 8px 0 12px;
+}
+.conversation-content .permission-card {
+  min-width: 0;
+  margin: 16px 0;
+}
+.permission-card pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 320px;
+  overflow: auto;
+}
+.preview-identity {
+  padding: 12px 20px;
+  background: var(--raised);
+  overflow-wrap: anywhere;
+}
+@media (max-width: 640px) {
+  .browser-notifications {
+    padding: 8px 12px;
+  }
+  .permission-fields .permission-fields {
+    padding-left: 6px;
+  }
+  .chat-delivery .button-row {
+    flex-wrap: wrap;
+  }
+}

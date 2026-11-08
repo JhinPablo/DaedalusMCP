@@ -13,11 +13,12 @@ export async function request<T>(path: string, body?: unknown): Promise<T> {
 export function useWorkspace() {
   const [state, setState] = useState<Workspace | null>(null),
     [error, setError] = useState(""),
-    [updateAvailable, setUpdateAvailable] = useState(false);
+    [updateAvailable, setUpdateAvailable] = useState(false),
+    [deployedBuildId, setDeployedBuildId] = useState<string>();
   const refresh = useCallback(async () => {
     try {
       const next = await request<Workspace>("/state");
-      setState((old) => (old?.revision === next.revision ? old : next));
+      setState((old) => (old && old.revision >= next.revision ? old : next));
       setError("");
     } catch (e) {
       setError(e instanceof Error ? e.message : "Sin conexión.");
@@ -55,6 +56,7 @@ export function useWorkspace() {
     const version = async () => {
       try {
         const info = await request<{ buildId: string }>("/version");
+        if (!disposed) setDeployedBuildId(info.buildId);
         const current = import.meta.env.VITE_DAEDALUS_BUILD_ID ?? "local";
         if (
           !disposed &&
@@ -66,6 +68,7 @@ export function useWorkspace() {
       } catch {}
     };
     connect();
+    void version();
     const timer = setInterval(() => {
       if (document.visibilityState !== "visible") return;
       if (ws?.readyState !== WebSocket.OPEN) void refresh();
@@ -86,5 +89,5 @@ export function useWorkspace() {
       ws?.close();
     };
   }, [refresh]);
-  return { state, error, refresh, updateAvailable };
+  return { state, error, refresh, updateAvailable, deployedBuildId };
 }

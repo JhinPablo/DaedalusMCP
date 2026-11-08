@@ -6,6 +6,67 @@ import { git } from "./worktrees";
 import type { AgentRun, ReleaseCandidate } from "../shared/model";
 const exec = promisify(execFile);
 type Api = <T = unknown>(route: string, body?: unknown) => Promise<T>;
+export async function publishTaskProgress(
+  repository: string,
+  root: string,
+  run: AgentRun,
+  api: Api,
+) {
+  if (
+    !run.worktree ||
+    !run.branch ||
+    run.kind !== "task" ||
+    run.status !== "completed" ||
+    run.changes?.startsWith("No se generaron cambios")
+  )
+    return;
+  if (
+    repository !== "JhinPablo/DaedalusMCP" ||
+    !/^daedalus\/[a-zA-Z0-9_-]+$/.test(run.branch)
+  )
+    throw new Error("Rama o repositorio no autorizado.");
+  const journal = path.join(root, "..", "publisher");
+  await mkdir(journal, { recursive: true });
+  const file = path.join(journal, "task-" + run.id + ".json");
+  try {
+    await readFile(file);
+    return;
+  } catch {}
+  const remote = await git(run.worktree, "remote", "get-url", "origin");
+  if (
+    ![
+      "https://github.com/" + repository,
+      "https://github.com/" + repository + ".git",
+      "git@github.com:" + repository + ".git",
+    ].includes(remote)
+  )
+    throw new Error("Remoto de otro repositorio.");
+  const tracked = (await git(run.worktree, "ls-files")).split("\n");
+  if (
+    tracked.some(
+      (file) =>
+        /(^|\/)(\.daedalus|node_modules)(\/|$)|(^|\/)\.env($|\.)|connector\.local\.json$/.test(
+          file,
+        ) && !file.endsWith(".env.example"),
+    )
+  )
+    throw new Error("La tarea contiene archivos privados.");
+  const commit = await git(run.worktree, "rev-parse", "HEAD");
+  await writeFile(file, JSON.stringify({ stage: "started", commit }));
+  try {
+    await git(run.worktree, "push", "origin", `${commit}:refs/heads/${run.branch}`);
+    await api(`/api/runs/${run.id}/progress`, { commit });
+    await writeFile(file, JSON.stringify({ stage: "finished", commit }));
+  } catch (error) {
+    await writeFile(
+      file,
+      JSON.stringify({ stage: "uncertain", commit, error: String(error) }),
+    );
+    throw new Error(
+      "No se confirmó la publicación del avance. Revisa GitHub antes de repetirla.",
+    );
+  }
+}
 async function gh<T>(repository: string, args: string[], cwd: string): Promise<T> {
   if (repository !== "JhinPablo/DaedalusMCP")
     throw new Error("Repositorio no autorizado.");

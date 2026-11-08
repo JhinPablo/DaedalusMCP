@@ -89,6 +89,16 @@ Se usa exclusivamente `cf`. `cloudflare.config.ts` declara Worker, assets y Dura
 
 El primer acceso del propietario permite crear las credenciales de Daedalus desde el panel. Las credenciales de motores permanecen en el equipo local.
 
+## Previews, avances y avisos
+
+Con `publishRepository` configurado, cada tarea completada publica su commit en su rama `daedalus/…` y añade un enlace a los cambios en el chat. El publicador comprueba el remoto y excluye archivos privados. Un intento de resultado incierto se conserva en su journal y se revisa antes de repetirlo.
+
+Al terminar el plan y la revisión, se prepara el PR. CI verifica el candidato y despliega el artefacto en el staging privado. El chat recibe los enlaces al diff y a la preview únicamente después de comprobar el despliegue. Staging es un entorno compartido, no una rama: su enlace incluye el commit esperado y avisa cuando otro candidato lo reemplaza. Producción requiere aprobación del propietario.
+
+«Activar notificaciones» solicita permiso al navegador mediante una acción del usuario. Avisa de permisos pendientes, finalización, fallos y previews listas; al pulsar el aviso abre el chat correspondiente. No muestra comandos ni conversaciones en el aviso. Las preferencias y la deduplicación se guardan por navegador y entorno. Se requiere mantener Daedalus abierto; no se implementa Web Push con el navegador cerrado. En iPhone/iPad, se utiliza desde la pantalla de inicio.
+
+Las solicitudes de permiso muestran motivo, comando, carpeta y alcance en campos legibles. El JSON completo sigue disponible como detalle técnico y la decisión conserva las mismas reglas de autorización.
+
 ## Conectar un cliente MCP
 
 Endpoint: `https://tu-dominio/mcp`, transporte Streamable HTTP. Configura los encabezados `Authorization: Bearer <credencial-MCP>`, `CF-Access-Client-Id` y `CF-Access-Client-Secret`.

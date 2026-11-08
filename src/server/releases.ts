@@ -172,6 +172,12 @@ export function prepareRelease(
   };
   e.state.releases.push(release);
   e.event("release.prepared", "Candidato preparado para pruebas.", s.id);
+  s.messages.push({
+    id: "release-prepared:" + release.id,
+    role: "assistant",
+    createdAt: time,
+    content: `Los cambios están en la rama \`${release.branch}\`. [Revisar cambios del PR #${release.prNumber}](${release.prUrl}/files). Estoy preparando las pruebas y la vista previa; todavía no se ha publicado en producción.`,
+  });
   return release;
 }
 export function reportRelease(
@@ -201,10 +207,30 @@ export function reportRelease(
     throw new DomainError(400, "Vista previa de otro entorno.");
   const previous = releaseFingerprint(r);
   Object.assign(r, data);
+  const preview = new URL(data.previewUrl);
+  preview.searchParams.set("preview", r.commit);
+  r.previewUrl = preview.href;
   const changed = previous !== releaseFingerprint(r);
   if (changed || data.checks !== "passed") r.approval = undefined;
   r.status = data.checks === "passed" ? (r.approval ? "approved" : "ready") : "failed";
   r.updatedAt = new Date().toISOString();
+  const session = e.state.sessions.find((s) => s.id === r.sessionId);
+  if (session) {
+    const messageId = "release-result:" + r.id;
+    const content =
+      data.checks === "passed"
+        ? `**Vista previa lista.** Las pruebas han pasado para el commit \`${r.commit.slice(0, 8)}\`, en la rama \`${r.branch}\`.\n\n[Abrir preview](${r.previewUrl}) · [Ver cambios](${r.prUrl ? r.prUrl + "/files" : `https://github.com/${r.repository}/compare/${r.baseCommit}...${r.commit}`})\n\nProducción espera tu aprobación en Publicaciones. El staging es compartido; el enlace comprueba el commit esperado.`
+        : `**No se pudo preparar la vista previa.** ${r.error ?? "Las pruebas no pasaron."} Consulta el resultado en Publicaciones.`;
+    const previousMessage = session.messages.find((m) => m.id === messageId);
+    if (previousMessage) previousMessage.content = content;
+    else
+      session.messages.push({
+        id: messageId,
+        role: "assistant",
+        content,
+        createdAt: r.updatedAt,
+      });
+  }
   e.event(
     "release.checked",
     "Resultados de pruebas de publicación registrados.",
