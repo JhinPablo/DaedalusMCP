@@ -610,22 +610,18 @@ export class Service {
           if (["completed", "failed", "cancelled"].includes(run.status))
             return Response.json({ ok: true });
           const key = `artifacts/${runId}/result.md`;
-          const storage = data.output
-            ? await this.storeArtifact(key, data.output)
-            : "cloud";
+          const report = run.kind === "planning" ? undefined : data.output;
+          const storage = report ? await this.storeArtifact(key, report) : "cloud";
           this.mutate((e) => {
             e.finish(p, runId, data);
-            if (
-              data.output &&
-              !e.state.artifacts.some((a) => a.id === runId + "-result")
-            )
+            if (report && !e.state.artifacts.some((a) => a.id === runId + "-result"))
               e.state.artifacts.push({
                 id: runId + "-result",
                 runId,
                 key,
-                name: "resultado.md",
+                name: run.kind === "review" ? "revision-final.md" : "informe-tarea.md",
                 mediaType: "text/markdown",
-                size: new TextEncoder().encode(data.output).length,
+                size: new TextEncoder().encode(report).length,
                 createdAt: new Date().toISOString(),
                 storage,
                 localPath: storage === "local" ? data.localArtifactPath : undefined,
