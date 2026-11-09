@@ -216,6 +216,22 @@ export function App() {
   const hasActive = runs.some((r) =>
     ["queued", "running", "waiting_permission", "uncertain"].includes(r.status),
   );
+  const executionApproved = session?.approvals.some(
+    (a) =>
+      a.milestone === "execution" &&
+      a.version === version?.version &&
+      a.digest === version?.digest &&
+      a.decision === "approved",
+  );
+  const canResume =
+    session?.phase === "paused" &&
+    executionApproved &&
+    !hasActive &&
+    !session.tasks.some((t) => t.status === "failed");
+  function resumePlan() {
+    if (!session || !canResume) return;
+    safe(() => act("/sessions/" + session.id + "/resume", {}));
+  }
   async function send(e: FormEvent) {
     e.preventDefault();
     if (!message.trim() || busy || hasActive || !targetProject) return;
@@ -731,12 +747,43 @@ export function App() {
                                 </button>
                               </div>
                             )}
+                            {session?.phase === "paused" && executionApproved && (
+                              <div className="chat-error" role="status">
+                                <strong>El plan está pausado</strong>
+                                <p>
+                                  {
+                                    session.tasks.filter(
+                                      (task) => task.status === "completed",
+                                    ).length
+                                  }{" "}
+                                  de {session.tasks.length} tareas completadas.
+                                </p>
+                                {canResume ? (
+                                  <button
+                                    className="primary"
+                                    disabled={busy}
+                                    onClick={resumePlan}
+                                  >
+                                    Continuar plan aprobado
+                                  </button>
+                                ) : (
+                                  <button
+                                    className="text-button"
+                                    onClick={() => setSupportPanel("activity")}
+                                  >
+                                    Revisar tareas y bloqueos
+                                  </button>
+                                )}
+                              </div>
+                            )}
                             {version && (
                               <button
                                 className="text-button"
                                 onClick={() => setSupportPanel("proposal")}
                               >
-                                Revisar propuesta v{version.version}
+                                {executionApproved
+                                  ? `Revisar propuesta v${version.version}`
+                                  : `Revisar propuesta v${version.version} para ejecutar`}
                                 <ArrowRight size={14} />
                               </button>
                             )}
@@ -1214,24 +1261,11 @@ export function App() {
                           Detener ejecución
                         </button>
                       )}
-                      {session.phase === "paused" &&
-                        !hasActive &&
-                        !session.tasks.some((t) => t.status === "failed") &&
-                        session.approvals.some(
-                          (a) =>
-                            a.milestone === "execution" &&
-                            a.version === version?.version &&
-                            a.decision === "approved",
-                        ) && (
-                          <button
-                            disabled={busy}
-                            onClick={() =>
-                              safe(() => act("/sessions/" + session.id + "/resume", {}))
-                            }
-                          >
-                            Continuar plan aprobado
-                          </button>
-                        )}
+                      {canResume && (
+                        <button disabled={busy} onClick={resumePlan}>
+                          Continuar plan aprobado
+                        </button>
+                      )}
                     </div>
                   )}
                   {pending.map((p) => (

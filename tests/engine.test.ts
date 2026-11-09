@@ -450,6 +450,7 @@ describe("API y aislamiento de autorización", () => {
     expect(s.repo.read().sessions[0].versions).toHaveLength(0);
     expect(s.repo.read().sessions[0].phase).toBe("idea");
     expect(s.repo.read().runs).toHaveLength(1);
+    expect(s.repo.read().artifacts).toHaveLength(0);
   });
   it("una mutación inválida no persiste cambios parciales", async () => {
     const s = service();
