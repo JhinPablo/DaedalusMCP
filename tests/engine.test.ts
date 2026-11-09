@@ -327,6 +327,24 @@ describe("Aprobaciones y coordinación", () => {
     expect(s.phase).toBe("paused");
     expect(e.claim(connector)).toBeNull();
   });
+  it("continúa con la tarea dependiente cuando llega el resultado confirmado de la misma ejecución", () => {
+    const { e, s } = setup();
+    e.propose(owner, s.id, proposal);
+    approve(e, s.id);
+    const run = e.claim(connector)!;
+    e.state.connectors[0].lastSeen = new Date(Date.now() - 120000).toISOString();
+    e.recoverStale();
+    expect(e.claim(connector)).toBeNull();
+
+    e.finish(connector, run.id, {
+      status: "completed",
+      output: "Contador implementado.",
+    });
+
+    expect(s.phase).toBe("executing");
+    expect(e.claim(connector)?.taskId).toBe("test");
+    expect(e.state.runs.filter((r) => r.taskId === "counter")).toEqual([run]);
+  });
   it("el digest también cubre las dependencias y criterios", () => {
     expect(digest(proposal)).not.toBe(
       digest({
