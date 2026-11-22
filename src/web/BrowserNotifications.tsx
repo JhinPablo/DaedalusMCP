@@ -2,7 +2,14 @@ import { useEffect, useRef, useState } from "react";
 import type { Workspace } from "../shared/model";
 import { readLocal, writeLocal } from "./persistence";
 import { workspaceNotices } from "./notifications";
-
+import {
+  notificationTone,
+  registerPwa,
+  subscribePush,
+  unsubscribePush,
+  testPush,
+} from "./pwa";
+import { PwaInstall } from "./PwaInstall";
 export function BrowserNotifications({
   state,
   openSession,
@@ -17,11 +24,29 @@ export function BrowserNotifications({
   const [permission, setPermission] = useState(
     supported ? Notification.permission : "denied",
   );
-  const [error, setError] = useState("");
-  const seen = useRef(new Set<string>(readLocal<string[]>("notification-seen", [])));
-  const initialized = useRef(false);
-  const navigate = useRef(openSession);
+  const [sound, setSound] = useState(() => readLocal("notifications-sound", true));
+  const [push, setPush] = useState(false),
+    [busy, setBusy] = useState(false),
+    [error, setError] = useState("");
+  const seen = useRef(new Set<string>(readLocal<string[]>("notification-seen", []))),
+    initialized = useRef(false),
+    navigate = useRef(openSession);
   navigate.current = openSession;
+  useEffect(() => {
+    if (!enabled || permission !== "granted" || !("PushManager" in window)) return;
+    let disposed = false;
+    void subscribePush(sound)
+      .then(() => {
+        if (!disposed) setPush(true);
+      })
+      .catch(() => {
+        if (!disposed)
+          setError("Push sin conexión. Reintenta al recuperar la conexión.");
+      });
+    return () => {
+      disposed = true;
+    };
+  }, [enabled, permission, sound]);
   useEffect(() => {
     if (!("serviceWorker" in navigator)) return;
     const handler = (event: MessageEvent) => {
@@ -30,62 +55,65 @@ export function BrowserNotifications({
         typeof event.data.sessionId === "string"
       )
         navigate.current(event.data.sessionId);
+      if (
+        event.data?.type === "daedalus-notice" &&
+        enabled &&
+        sound &&
+        document.visibilityState === "visible" &&
+        !seen.current.has(event.data.id)
+      ) {
+        seen.current.add(event.data.id);
+        void notificationTone().catch(() => {});
+      }
     };
     navigator.serviceWorker.addEventListener("message", handler);
     return () => navigator.serviceWorker.removeEventListener("message", handler);
-  }, []);
+  }, [enabled, sound]);
   useEffect(() => {
     if (!state) return;
     const notices = workspaceNotices(state);
-    // Seed historical completions once. Pending permissions remain actionable on opt-in.
     if (!initialized.current) {
-      for (const notice of notices)
-        if (!notice.id.startsWith("permission:")) seen.current.add(notice.id);
+      for (const n of notices)
+        if (!n.id.startsWith("permission:")) seen.current.add(n.id);
       initialized.current = true;
     }
     if (!enabled || !supported || permission !== "granted") {
-      for (const notice of notices)
-        if (!notice.id.startsWith("permission:")) seen.current.add(notice.id);
+      for (const n of notices)
+        if (!n.id.startsWith("permission:")) seen.current.add(n.id);
       return;
     }
+    if (push || "PushManager" in window) return;
     let disposed = false;
     void (async () => {
       let registration: ServiceWorkerRegistration | undefined;
-      if ("serviceWorker" in navigator) {
-        try {
-          await navigator.serviceWorker.register("/notifications-sw.js", {
-            scope: "/",
-          });
-          registration = await Promise.race([
-            navigator.serviceWorker.ready,
-            new Promise<undefined>((resolve) => setTimeout(resolve, 5000)),
-          ]);
-        } catch {
-          /* Desktop fallback below. */
-        }
+      try {
+        registration = await registerPwa();
+      } catch {
+        /* Desktop notification fallback. */
       }
-      for (const notice of notices) {
-        if (disposed || seen.current.has(notice.id)) continue;
-        seen.current.add(notice.id);
+      for (const n of notices) {
+        if (disposed || seen.current.has(n.id)) continue;
+        seen.current.add(n.id);
         const options = {
-          body: notice.body,
-          tag: notice.id,
-          data: { sessionId: notice.sessionId },
+          body: n.body,
+          tag: n.id,
+          silent: !sound || document.visibilityState === "visible",
+          data: { sessionId: n.sessionId },
         };
         try {
-          if (registration) await registration.showNotification(notice.title, options);
+          if (registration) await registration.showNotification(n.title, options);
           else {
-            const notification = new Notification(notice.title, options);
-            notification.onclick = () => {
+            const notice = new Notification(n.title, options);
+            notice.onclick = () => {
               window.focus();
-              if (notice.sessionId) navigate.current(notice.sessionId);
-              notification.close();
+              if (n.sessionId) navigate.current(n.sessionId);
+              notice.close();
             };
           }
+          if (sound && document.visibilityState === "visible")
+            void notificationTone().catch(() => {});
         } catch {
-          setError(
-            "El navegador no pudo mostrar el aviso. Revisa sus permisos y ajustes de notificaciones.",
-          );
+          setError("El navegador no pudo mostrar el aviso. Revisa sus permisos.");
         }
       }
       writeLocal("notification-seen", [...seen.current].slice(-500));
@@ -93,29 +121,42 @@ export function BrowserNotifications({
     return () => {
       disposed = true;
     };
-  }, [state, enabled, supported, permission]);
+  }, [state, enabled, permission, supported, push, sound]);
   async function toggle() {
+    setBusy(true);
     setError("");
-    if (enabled && permission === "granted") {
-      setEnabled(false);
-      writeLocal("notifications-enabled", false);
-      return;
-    }
     try {
+      if (enabled && permission === "granted") {
+        if ("PushManager" in window) await unsubscribePush();
+        setEnabled(false);
+        setPush(false);
+        writeLocal("notifications-enabled", false);
+        return;
+      }
+      if (sound) void notificationTone().catch(() => {});
       const result = await Notification.requestPermission();
       setPermission(result);
-      const allow = result === "granted";
-      setEnabled(allow);
-      writeLocal("notifications-enabled", allow);
-    } catch {
-      setError("No se pudo solicitar el permiso de notificaciones.");
+      if (result === "granted") {
+        if ("PushManager" in window) await subscribePush(sound);
+        setPush("PushManager" in window);
+        setEnabled(true);
+        writeLocal("notifications-enabled", true);
+      }
+    } catch (e) {
+      setError(
+        e instanceof Error
+          ? e.message
+          : "No se pudo cambiar la configuración de avisos.",
+      );
+    } finally {
+      setBusy(false);
     }
   }
   return (
     <div className="browser-notifications">
       <button
         type="button"
-        disabled={!supported || permission === "denied"}
+        disabled={busy || !supported || permission === "denied"}
         onClick={() => void toggle()}
         aria-pressed={enabled && permission === "granted"}
       >
@@ -125,11 +166,42 @@ export function BrowserNotifications({
       </button>
       <small>
         {!supported
-          ? "Este navegador no admite avisos. En iPhone, añade Daedalus a la pantalla de inicio."
+          ? "En iPhone, añade Daedalus a la pantalla de inicio para activar push."
           : permission === "denied"
             ? "Notificaciones bloqueadas: habilítalas en los ajustes del sitio."
-            : "Avisos de permisos, tareas y previews mientras Daedalus esté abierto. En iPhone, úsalo desde la pantalla de inicio."}
+            : push
+              ? "Push conectado: avisos de permisos, resultados y previews incluso con el panel cerrado."
+              : "Activa los avisos en este dispositivo. En iPhone instala la app en la pantalla de inicio."}
       </small>
+      <label>
+        <input
+          type="checkbox"
+          checked={sound}
+          onChange={(e) => {
+            setSound(e.target.checked);
+            writeLocal("notifications-sound", e.target.checked);
+            if (e.target.checked) void notificationTone().catch(() => {});
+          }}
+        />{" "}
+        Sonido de notificaciones
+      </label>
+      <small>
+        Con la app abierta se usa un tono. En segundo plano el sonido depende del
+        sistema, sus permisos y el modo silencio.
+      </small>
+      {push && (
+        <button
+          type="button"
+          onClick={() =>
+            void testPush().catch(() =>
+              setError("No se pudo enviar el aviso de prueba."),
+            )
+          }
+        >
+          Probar notificación push
+        </button>
+      )}
+      <PwaInstall />
       {error && <p role="alert">{error}</p>}
     </div>
   );

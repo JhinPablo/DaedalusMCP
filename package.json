@@ -27,6 +27,7 @@
     "deploy:preview": "cf deploy --prebuilt --dry-run"
   },
   "dependencies": {
+    "@block65/webcrypto-web-push": "^2.0.0",
     "@modelcontextprotocol/sdk": "1.32.2",
     "@noble/hashes": "^2.0.0",
     "@opencode-ai/sdk": "latest",
