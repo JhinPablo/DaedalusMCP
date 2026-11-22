@@ -38,6 +38,9 @@ import type {
   Session,
   Workspace,
   PermissionRequest,
+  UsageSnapshot,
+  ModelOption,
+  EngineSelection,
 } from "../shared/model";
 import { request, useWorkspace } from "./api";
 import { readLocal, writeLocal, useLocalText } from "./persistence";
@@ -79,6 +82,13 @@ const stamp = (date: string) =>
     hour: "2-digit",
     minute: "2-digit",
     second: "2-digit",
+  });
+const stampDate = (date: string) =>
+  new Date(date).toLocaleString("es-CO", {
+    day: "2-digit",
+    month: "short",
+    hour: "2-digit",
+    minute: "2-digit",
   });
 function Mark() {
   return (
@@ -216,6 +226,22 @@ export function App() {
   const hasActive = runs.some((r) =>
     ["queued", "running", "waiting_permission", "uncertain"].includes(r.status),
   );
+  const executionApproved = session?.approvals.some(
+    (a) =>
+      a.milestone === "execution" &&
+      a.version === version?.version &&
+      a.digest === version?.digest &&
+      a.decision === "approved",
+  );
+  const canResume =
+    session?.phase === "paused" &&
+    executionApproved &&
+    !hasActive &&
+    !session.tasks.some((t) => t.status === "failed");
+  function resumePlan() {
+    if (!session || !canResume) return;
+    safe(() => act("/sessions/" + session.id + "/resume", {}));
+  }
   async function send(e: FormEvent) {
     e.preventDefault();
     if (!message.trim() || busy || hasActive || !targetProject) return;
@@ -403,6 +429,22 @@ export function App() {
             </span>
           </div>
           <div className="topbar-right">
+            <button
+              className="usage-indicator"
+              onClick={() => nav("connections")}
+              aria-label="Consultar uso de OpenCode Go"
+              title="Uso de OpenCode Go y selección de modelo"
+            >
+              Go ·{" "}
+              {planningConnector?.usage?.windows
+                ? `${Math.min(...Object.values(planningConnector.usage.windows).map((w) => w.remainingPercent)).toFixed(0)}%`
+                : "—"}
+              {planningConnector?.usage &&
+                (!planningConnector.usage.connected ||
+                  Date.now() - Date.parse(planningConnector.usage.lastAttemptAt) >
+                    120000) &&
+                " ◌"}
+            </button>
             <Appearance>
               <BrowserNotifications
                 state={state}
@@ -731,12 +773,43 @@ export function App() {
                                 </button>
                               </div>
                             )}
+                            {session?.phase === "paused" && executionApproved && (
+                              <div className="chat-error" role="status">
+                                <strong>El plan está pausado</strong>
+                                <p>
+                                  {
+                                    session.tasks.filter(
+                                      (task) => task.status === "completed",
+                                    ).length
+                                  }{" "}
+                                  de {session.tasks.length} tareas completadas.
+                                </p>
+                                {canResume ? (
+                                  <button
+                                    className="primary"
+                                    disabled={busy}
+                                    onClick={resumePlan}
+                                  >
+                                    Continuar plan aprobado
+                                  </button>
+                                ) : (
+                                  <button
+                                    className="text-button"
+                                    onClick={() => setSupportPanel("activity")}
+                                  >
+                                    Revisar tareas y bloqueos
+                                  </button>
+                                )}
+                              </div>
+                            )}
                             {version && (
                               <button
                                 className="text-button"
                                 onClick={() => setSupportPanel("proposal")}
                               >
-                                Revisar propuesta v{version.version}
+                                {executionApproved
+                                  ? `Revisar propuesta v${version.version}`
+                                  : `Revisar propuesta v${version.version} para ejecutar`}
                                 <ArrowRight size={14} />
                               </button>
                             )}
@@ -1214,24 +1287,11 @@ export function App() {
                           Detener ejecución
                         </button>
                       )}
-                      {session.phase === "paused" &&
-                        !hasActive &&
-                        !session.tasks.some((t) => t.status === "failed") &&
-                        session.approvals.some(
-                          (a) =>
-                            a.milestone === "execution" &&
-                            a.version === version?.version &&
-                            a.decision === "approved",
-                        ) && (
-                          <button
-                            disabled={busy}
-                            onClick={() =>
-                              safe(() => act("/sessions/" + session.id + "/resume", {}))
-                            }
-                          >
-                            Continuar plan aprobado
-                          </button>
-                        )}
+                      {canResume && (
+                        <button disabled={busy} onClick={resumePlan}>
+                          Continuar plan aprobado
+                        </button>
+                      )}
                     </div>
                   )}
                   {pending.map((p) => (
@@ -1846,6 +1906,142 @@ function EditForm({
     </form>
   );
 }
+const usageLabels = {
+  rolling: "5 horas",
+  weekly: "Semanal",
+  monthly: "Mensual",
+} as const;
+
+function EngineSelector({
+  models,
+  selection,
+  act,
+  busy,
+}: {
+  models: ModelOption[];
+  selection?: EngineSelection;
+  act: (path: string, body?: unknown) => Promise<unknown>;
+  busy: boolean;
+}) {
+  const [model, setModel] = useState(selection?.model ?? models[0]?.id ?? "");
+  const chosen = models.find((m) => m.id === model);
+  const variants = chosen?.variants ?? [];
+  const [variant, setVariant] = useState(
+    selection?.variant ?? (variants.includes("high") ? "high" : (variants[0] ?? "")),
+  );
+  return (
+    <form
+      className="engine-form"
+      onSubmit={(e) => {
+        e.preventDefault();
+        void act("/engines/opencode", {
+          model,
+          variant: variant || undefined,
+        }).catch(() => {});
+      }}
+    >
+      <label>
+        Modelo de planeación y revisión
+        <select
+          value={model}
+          onChange={(e) => {
+            const next = e.target.value;
+            setModel(next);
+            const options = models.find((m) => m.id === next)?.variants ?? [];
+            setVariant(options.includes("high") ? "high" : (options[0] ?? ""));
+          }}
+        >
+          {models.map((m) => (
+            <option key={m.id} value={m.id}>
+              {m.name}
+              {m.cost ? ` · $${m.cost.input}/$${m.cost.output} por Mtok` : ""}
+            </option>
+          ))}
+        </select>
+      </label>
+      {variants.length > 0 && (
+        <label>
+          Modalidad de razonamiento
+          <select value={variant} onChange={(e) => setVariant(e.target.value)}>
+            {variants.map((v) => (
+              <option key={v} value={v}>
+                {v}
+              </option>
+            ))}
+          </select>
+        </label>
+      )}
+      <button type="submit" disabled={busy}>
+        Aplicar selección
+      </button>
+      {selection && (
+        <small>
+          Selección vigente: {selection.model}
+          {selection.variant ? " · " + selection.variant : ""} ·{" "}
+          {stampDate(selection.updatedAt)}
+        </small>
+      )}
+    </form>
+  );
+}
+
+function UsagePanel({ usage }: { usage: UsageSnapshot }) {
+  const connected =
+    usage.connected && Date.now() - Date.parse(usage.lastAttemptAt) < 120000;
+  return (
+    <div className="usage-panel">
+      <div className="usage-head">
+        <strong>OpenCode Go</strong>
+        <span className={"usage-state " + (connected ? "ok" : "warn")}>
+          {connected ? "Actualizado" : "Sin conexión"}
+        </span>
+      </div>
+      {usage.windows ? (
+        <div className="usage-windows">
+          {(["rolling", "weekly", "monthly"] as const).map((key) => {
+            const window = usage.windows![key];
+            return (
+              <div className="usage-window" key={key}>
+                <div className="usage-window-head">
+                  <span>{usageLabels[key]}</span>
+                  <span>{window.usedPercent.toFixed(0)}% usado</span>
+                </div>
+                <div
+                  className="usage-bar"
+                  role="progressbar"
+                  aria-label={usageLabels[key]}
+                  aria-valuenow={window.usedPercent}
+                  aria-valuemin={0}
+                  aria-valuemax={100}
+                >
+                  <span style={{ width: `${window.usedPercent}%` }} />
+                </div>
+                <small>
+                  {window.remainingPercent.toFixed(0)}% restante · Reinicia{" "}
+                  {stampDate(window.resetsAt)}
+                </small>
+              </div>
+            );
+          })}
+        </div>
+      ) : (
+        <p>Sin datos de uso todavía.</p>
+      )}
+      {usage.error && <p className="run-error preserve">{usage.error}</p>}
+      <small>Última actualización: {stampDate(usage.updatedAt)}</small>
+      {usage.local && (
+        <small>
+          Consumo local: {usage.local.prompts} solicitudes ·{" "}
+          {(usage.local.tokens.input + usage.local.tokens.output).toLocaleString(
+            "es-CO",
+          )}{" "}
+          tokens · ${usage.local.cost.toFixed(2)}
+        </small>
+      )}
+    </div>
+  );
+}
+
 function Connections({
   state,
   act,
@@ -1883,7 +2079,7 @@ function Connections({
                 </div>
                 <p>
                   <span className={"status-dot " + (c.opencode ? "online" : "")} />
-                  OpenCode · {c.model ?? "DeepSeek gratuito"}
+                  OpenCode · {c.model ?? "DeepSeek V4.1 Flash"}
                   {" · "}
                   {c.opencode ? "Disponible" : "No disponible"}
                 </p>
@@ -1897,6 +2093,25 @@ function Connections({
                   <span className={"status-dot " + (c.codex ? "online" : "")} />
                   Codex · sesión de ChatGPT
                 </p>
+                {c.usage && <UsagePanel usage={c.usage} />}
+                {c.models && c.models.length > 0 && (
+                  <EngineSelector
+                    key={`${state.engines?.opencode?.updatedAt ?? ""}:${c.model}:${c.modelVariant}`}
+                    models={c.models}
+                    selection={
+                      state.engines?.opencode ??
+                      (c.model
+                        ? {
+                            model: c.model,
+                            variant: c.modelVariant,
+                            updatedAt: c.lastSeen,
+                          }
+                        : undefined)
+                    }
+                    act={act}
+                    busy={busy}
+                  />
+                )}
                 {c.error && <p className="run-error preserve">{c.error}</p>}
                 <small>Última señal: {stamp(c.lastSeen)}</small>
               </article>
@@ -1921,8 +2136,9 @@ function Connections({
             <strong>Autentica los motores</strong>
             <code>codex login</code>
             <p>
-              Elige ChatGPT. Inicia OpenCode con su modelo DeepSeek gratuito y el
-              servidor en localhost.
+              Elige ChatGPT. Inicia sesión en OpenCode Go con{" "}
+              <code>npm run opencode:login</code> y arranca el servidor local con{" "}
+              <code>npm run opencode:serve</code>.
             </p>
           </li>
           <li>

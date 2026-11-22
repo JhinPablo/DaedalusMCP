@@ -220,6 +220,38 @@ describe("Aprobaciones y coordinación", () => {
       e.decide(owner, s.id, "approach", 1, v.digest, "approved", ""),
     ).toThrow("ya está aprobado");
   });
+  it("permite reanudar una revisión fallida sin repetir las tareas completadas", async () => {
+    const { e, s } = setup();
+    e.propose(owner, s.id, proposal);
+    approve(e, s.id);
+    e.finish(connector, e.claim(connector)!.id, { status: "completed" });
+    e.finish(connector, e.claim(connector)!.id, { status: "completed" });
+    const failedReview = e.claim(connector)!;
+    e.finish(connector, failedReview.id, { status: "failed", error: "Cuota agotada" });
+    let state = e.state;
+    const service = new Service(
+      {
+        read: () => state,
+        write: (next) => {
+          state = next;
+        },
+      },
+      { put: async () => {}, get: async () => null },
+    );
+    const resumed = await service.handle(
+      new Request(`http://localhost/api/sessions/${s.id}/resume`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: "{}",
+      }),
+      owner,
+    );
+    expect(resumed.status).toBe(200);
+    const next = new Engine(state).claim(connector)!;
+    expect(next.kind).toBe("review");
+    expect(next.id).not.toBe(failedReview.id);
+    expect(state.runs.filter((run) => run.kind === "task")).toHaveLength(2);
+  });
   it("no permite cambiar un plan activo", () => {
     const { e, s } = setup();
     e.propose(owner, s.id, proposal);
@@ -251,6 +283,22 @@ describe("Aprobaciones y coordinación", () => {
       output: "Sin hallazgos bloqueantes.",
     });
     expect(s.phase).toBe("completed");
+  });
+  it("la revisión final requiere OpenCode y no cae a Codex", () => {
+    const { e, s } = setup();
+    e.propose(owner, s.id, proposal);
+    approve(e, s.id);
+    for (const _ of proposal.tasks) {
+      const run = e.claim(connector)!;
+      e.finish(connector, run.id, { status: "completed", output: "Hecho." });
+    }
+    expect(s.phase).toBe("review");
+    const c = e.state.connectors[0];
+    c.opencode = false;
+    c.codex = true;
+    expect(e.claim(connector)).toBeNull();
+    c.opencode = true;
+    expect(e.claim(connector)?.kind).toBe("review");
   });
   it("limita a tres ejecutores simultáneos", () => {
     const { e, s } = setup();
@@ -326,6 +374,24 @@ describe("Aprobaciones y coordinación", () => {
     expect(run.status).toBe("uncertain");
     expect(s.phase).toBe("paused");
     expect(e.claim(connector)).toBeNull();
+  });
+  it("continúa con la tarea dependiente cuando llega el resultado confirmado de la misma ejecución", () => {
+    const { e, s } = setup();
+    e.propose(owner, s.id, proposal);
+    approve(e, s.id);
+    const run = e.claim(connector)!;
+    e.state.connectors[0].lastSeen = new Date(Date.now() - 120000).toISOString();
+    e.recoverStale();
+    expect(e.claim(connector)).toBeNull();
+
+    e.finish(connector, run.id, {
+      status: "completed",
+      output: "Contador implementado.",
+    });
+
+    expect(s.phase).toBe("executing");
+    expect(e.claim(connector)?.taskId).toBe("test");
+    expect(e.state.runs.filter((r) => r.taskId === "counter")).toEqual([run]);
   });
   it("el digest también cubre las dependencias y criterios", () => {
     expect(digest(proposal)).not.toBe(
@@ -450,6 +516,7 @@ describe("API y aislamiento de autorización", () => {
     expect(s.repo.read().sessions[0].versions).toHaveLength(0);
     expect(s.repo.read().sessions[0].phase).toBe("idea");
     expect(s.repo.read().runs).toHaveLength(1);
+    expect(s.repo.read().artifacts).toHaveLength(0);
   });
   it("una mutación inválida no persiste cambios parciales", async () => {
     const s = service();

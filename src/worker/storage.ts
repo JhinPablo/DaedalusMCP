@@ -23,6 +23,7 @@ function records(state: Workspace) {
       migrationId: state.migrationId,
     }),
   );
+  result.set("engines", JSON.stringify(state.engines ?? null));
   for (const field of collections)
     state[field].forEach((entity, order) => {
       const text = JSON.stringify(entity);
@@ -58,6 +59,9 @@ export class SqliteRepository implements Repository {
       this.previous = new Map(rows.map((row) => [row.key, row.value]));
       const state = emptyWorkspace();
       Object.assign(state, JSON.parse(this.previous.get("meta") ?? "{}"));
+      const engines = this.previous.get("engines");
+      if (engines && engines !== "null")
+        state.engines = JSON.parse(engines) as Workspace["engines"];
       for (const field of collections) {
         const entities = new Map<
           string,

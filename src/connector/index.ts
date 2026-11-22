@@ -3,14 +3,21 @@ import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { loadConfig } from "./config";
 import { CodexClient } from "./codex";
-import { OpenCodeClient } from "./opencode";
+import { OpenCodeClient, modelRef } from "./opencode";
+import { UsageReporter, usageLimit, localConsumption } from "./usage";
 import { planWithFallback, planWithLuna } from "./planning";
 import { loadPlanningSession, isRunJournalFile } from "./planning-session";
 import { Worktrees } from "./worktrees";
 import { projectContext } from "./context";
 import { taskReport, ExecutionOutcomeError } from "./outcome";
 import { loadSkills, skillCatalog, type SkillEntry } from "./skills";
-import type { AgentRun, PermissionRequest } from "../shared/model";
+import type {
+  AgentRun,
+  PermissionRequest,
+  UsageSnapshot,
+  ModelOption,
+  EngineSelection,
+} from "../shared/model";
 import type { ReleaseCandidate } from "../shared/model";
 import { publishReviews, publishTaskProgress } from "./publisher";
 
@@ -76,12 +83,28 @@ const openCode = new OpenCodeClient(
   config.opencodeUrl,
   config.opencodeModel,
   path.join(root, "..", "opencode-availability.json"),
+  config.opencodeVariant,
 );
+const usageReporter = new UsageReporter(
+  config.opencodeAuthFile,
+  path.join(root, "..", "opencode-usage.json"),
+);
+const openCodeLabelOf = (model: string, variant?: string) => {
+  const ref = modelRef(model);
+  const base = ref.modelID.includes("deepseek-v4.1-flash")
+    ? "OpenCode · DeepSeek V4.1 Flash"
+    : "OpenCode · " + ref.modelID;
+  return variant ? base + " · " + variant : base;
+};
+let appliedModel = config.opencodeModel,
+  appliedVariant = config.opencodeVariant;
 let codex = false,
   opencode = false,
   luna = false,
   planningModel = "",
   capabilityError = "";
+let usage: UsageSnapshot | undefined;
+let models: ModelOption[] = [];
 let catalog: SkillEntry[] = [];
 let lastReleasePoll = 0;
 async function pollRepositoryReleases() {
@@ -124,6 +147,8 @@ async function pollRepositoryReleases() {
 async function probe() {
   const errors: string[] = [];
   luna = false;
+  const usagePromise = usageReporter.report();
+  const localPromise = localConsumption(config.opencodeStatsCommand);
   try {
     const c = new CodexClient(
       config.codexCommand,
@@ -133,7 +158,6 @@ async function probe() {
     try {
       await c.initialize();
       await c.account();
-      codex = true;
       if (config.planningFallback === "luna-high") {
         try {
           await c.requireLunaHigh();
@@ -142,6 +166,8 @@ async function probe() {
           errors.push(error instanceof Error ? error.message : String(error));
         }
       }
+      await c.requireExecutionReady();
+      codex = true;
     } finally {
       c.close();
     }
@@ -155,14 +181,28 @@ async function probe() {
     errors.push(e instanceof Error ? e.message : String(e));
   }
   try {
-    opencode = await openCode.available();
+    const snapshot = await usagePromise,
+      local = await localPromise;
+    usage = local ? { ...snapshot, local } : snapshot;
+    await usageReporter.synchronize((provider, credential) =>
+      openCode.synchronizeCredential(provider, credential),
+    );
+    models = await openCode.available();
+    opencode = true;
+    const limit = usageLimit(usage);
+    if (limit) {
+      opencode = false;
+      errors.push(
+        `OpenCode Go: límite ${limit.label} alcanzado. Se restablece ${new Date(limit.resetsAt).toLocaleString("es-CO")}.`,
+      );
+    }
   } catch (e) {
     opencode = false;
     errors.push(e instanceof Error ? e.message : String(e));
   }
   capabilityError = errors.join("\n");
   planningModel = opencode
-    ? "opencode/" + config.opencodeModel
+    ? openCodeLabelOf(appliedModel, appliedVariant)
     : luna
       ? "gpt-6-luna · alto"
       : "Sin planificador disponible";
@@ -174,7 +214,10 @@ async function register() {
     opencode,
     planning: opencode || luna,
     planningModel,
-    model: "opencode/" + config.opencodeModel,
+    model: modelRef(appliedModel).modelID,
+    modelVariant: appliedVariant,
+    usage,
+    models,
     error: capabilityError || undefined,
     projects: config.projects.map((p) => ({
       id: p.id,
@@ -263,6 +306,14 @@ async function permission(
   return { decision: "cancel" };
 }
 async function execute(run: AgentRun, relatedRuns: AgentRun[]) {
+  const selectedModel = appliedModel;
+  const selectedVariant = appliedVariant;
+  const runOpenCode = new OpenCodeClient(
+    config.opencodeUrl,
+    selectedModel,
+    path.join(root, "..", "opencode-availability.json"),
+    selectedVariant,
+  );
   const controller = new AbortController();
   active.set(run.id, controller);
   const journal: Journal = { run, stage: "started" };
@@ -290,13 +341,13 @@ async function execute(run: AgentRun, relatedRuns: AgentRun[]) {
       const deepseekSession = await loadPlanningSession(
         root,
         run,
-        "OpenCode · DeepSeek V4.1 Flash Free",
+        openCodeLabelOf(selectedModel, selectedVariant),
       );
       const lunaSession =
         config.planningFallback === "luna-high"
           ? await loadPlanningSession(root, run, "GPT-6 Luna · alto")
           : undefined;
-      run.model = "OpenCode · DeepSeek V4.1 Flash Free";
+      run.model = openCodeLabelOf(selectedModel, selectedVariant);
       const planningPrompt =
         run.prompt +
         "\n\n" +
@@ -307,7 +358,7 @@ async function execute(run: AgentRun, relatedRuns: AgentRun[]) {
         skills;
       const result = await planWithFallback(
         () =>
-          openCode.plan(
+          runOpenCode.plan(
             planningPrompt,
             project.root,
             controller.signal,
@@ -377,58 +428,84 @@ async function execute(run: AgentRun, relatedRuns: AgentRun[]) {
       run.branch = branch;
       run.baseCommit = baseCommit;
       await save(journal);
-      const events: Array<string> = [];
-      client = new CodexClient(
-        config.codexCommand,
-        worktree,
-        (m, p) => permission(run, m, p),
-        (m) => {
-          if (
-            m.method === "item/agentMessage/delta" &&
-            typeof m.params?.delta === "string"
-          )
-            events.push(m.params.delta);
-        },
-      );
-      const stream = setInterval(() => {
-        if (events.length) {
-          const message = events.splice(0).join("").slice(0, 12000);
-          void api("/api/runs/" + run.id + "/event", { message }).catch(() => {});
-        }
-      }, 1200);
-      let output: string;
-      try {
-        output = await client.execute(
-          run.prompt + "\n\n" + skills,
+      if (run.kind === "review") {
+        const diff = await manager.diff(worktree, baseCommit);
+        run.model = openCodeLabelOf(selectedModel, selectedVariant);
+        const output = await runOpenCode.review(
+          run.prompt +
+            "\n\nDIF combinado de la integración (base " +
+            baseCommit.slice(0, 12) +
+            "):\n" +
+            diff +
+            "\n\n" +
+            skills,
           worktree,
-          run.kind === "review",
           controller.signal,
           onSession,
-          run.approvedVersion && run.approvedDigest
-            ? { version: run.approvedVersion, digest: run.approvedDigest }
-            : undefined,
         );
-      } finally {
-        clearInterval(stream);
+        journal.outcome = {
+          status: "completed",
+          output,
+          externalSessionId: run.externalSessionId,
+          worktree,
+          branch,
+          baseCommit,
+          changes: "Revisión final de solo lectura con OpenCode · DeepSeek.",
+        };
+      } else {
+        const events: Array<string> = [];
+        client = new CodexClient(
+          config.codexCommand,
+          worktree,
+          (m, p) => permission(run, m, p),
+          (m) => {
+            if (
+              m.method === "item/agentMessage/delta" &&
+              typeof m.params?.delta === "string"
+            )
+              events.push(m.params.delta);
+          },
+        );
+        const stream = setInterval(() => {
+          if (events.length) {
+            const message = events.splice(0).join("").slice(0, 12000);
+            void api("/api/runs/" + run.id + "/event", { message }).catch(() => {});
+          }
+        }, 1200);
+        let output: string;
+        try {
+          output = await client.execute(
+            run.prompt + "\n\n" + skills,
+            worktree,
+            false,
+            controller.signal,
+            onSession,
+            run.approvedVersion && run.approvedDigest
+              ? { version: run.approvedVersion, digest: run.approvedDigest }
+              : undefined,
+          );
+        } finally {
+          clearInterval(stream);
+        }
+        output = taskReport(output);
+        const result = await manager.finish(worktree);
+        journal.outcome = {
+          status: "completed",
+          output,
+          externalSessionId: run.externalSessionId,
+          worktree,
+          branch,
+          baseCommit,
+          ...result,
+        };
       }
-      if (run.kind === "task") output = taskReport(output);
-      const result =
-        run.kind === "task"
-          ? await manager.finish(worktree)
-          : { changes: "Revisión de solo lectura." };
-      journal.outcome = {
-        status: "completed",
-        output,
-        externalSessionId: run.externalSessionId,
-        worktree,
-        branch,
-        baseCommit,
-        ...result,
-      };
     }
   } catch (e) {
     const message = e instanceof Error ? e.message : String(e);
-    if (run.kind === "planning" && !controller.signal.aborted) {
+    if (
+      (run.kind === "planning" || run.kind === "review") &&
+      !controller.signal.aborted
+    ) {
       try {
         await openCode.available();
       } catch (availabilityError) {
@@ -445,7 +522,7 @@ async function execute(run: AgentRun, relatedRuns: AgentRun[]) {
         ? "cancelled"
         : e instanceof ExecutionOutcomeError
           ? "failed"
-          : run.externalSessionId && run.kind !== "planning"
+          : run.externalSessionId && run.kind === "task"
             ? "uncertain"
             : "failed",
       error: message,
@@ -543,6 +620,7 @@ while (!stopping) {
     }
     const control = await api<{
       run: AgentRun | null;
+      engines?: { opencode?: EngineSelection } | null;
       relatedRuns: AgentRun[];
       cancelledSessions: string[];
       permissions: PermissionRequest[];
@@ -553,6 +631,23 @@ while (!stopping) {
         stopping || draining ? 0 : Math.max(0, config.maxParallel - active.size),
     });
     permissions = control.permissions;
+    const selection = control.engines?.opencode;
+    if (
+      selection &&
+      (selection.model !== appliedModel || selection.variant !== appliedVariant)
+    ) {
+      appliedModel = selection.model;
+      appliedVariant = selection.variant;
+      openCode.setModel(appliedModel, appliedVariant);
+      planningModel = openCodeLabelOf(appliedModel, appliedVariant);
+      log(
+        "OpenCode cambia a " +
+          appliedModel +
+          (appliedVariant ? " · " + appliedVariant : "") +
+          " por decisión del propietario.",
+      );
+      void register().catch(() => {});
+    }
     for (const [runId, c] of active) {
       const j = JSON.parse(
         await readFile(path.join(root, runId + ".json"), "utf8"),

@@ -1,8 +1,10 @@
 import { readFile } from "node:fs/promises";
+import path from "node:path";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { CodexClient } from "../src/connector/codex";
 import { OpenCodeClient } from "../src/connector/opencode";
+import { UsageReporter } from "../src/connector/usage";
 const exec = promisify(execFile);
 const checks: Array<{ check: string; ok: boolean; detail: string }> = [];
 async function check(name: string, fn: () => Promise<string>) {
@@ -29,18 +31,33 @@ await check("Codex · ChatGPT", async () => {
   try {
     await c.initialize();
     await c.account();
+    await c.requireExecutionReady();
     return "App Server disponible y autenticado con ChatGPT.";
   } finally {
     c.close();
   }
 });
-await check("OpenCode · DeepSeek gratuito", async () => {
-  const model = process.env.DAEDALUS_OPENCODE_MODEL ?? "deepseek-v4.1-flash-free";
+await check("OpenCode Go · DeepSeek", async () => {
+  const model = process.env.DAEDALUS_OPENCODE_MODEL ?? "deepseek-v4.1-flash";
   await new OpenCodeClient(
     process.env.DAEDALUS_OPENCODE_URL ?? "http://127.0.0.1:4096",
     model,
   ).available();
-  return model + " disponible con coste cero.";
+  return model + " disponible en la suscripción OpenCode Go.";
+});
+await check("OpenCode Go · uso de la suscripción", async () => {
+  const reporter = new UsageReporter(
+    path.resolve(".daedalus/opencode/data/opencode/auth.json"),
+    path.resolve(".daedalus/opencode-usage.json"),
+  );
+  const snapshot = await reporter.report();
+  if (!snapshot.connected)
+    throw new Error(snapshot.error ?? "No se pudo consultar el uso.");
+  const windows = snapshot.windows!;
+  return (
+    `5 horas ${windows.rolling.usedPercent}% · semanal ${windows.weekly.usedPercent}% · mensual ${windows.monthly.usedPercent}%. ` +
+    `Reinicios: ${windows.rolling.resetsAt} / ${windows.weekly.resetsAt} / ${windows.monthly.resetsAt}.`
+  );
 });
 await check("Skills fijadas", async () => {
   const lock = JSON.parse(await readFile("skills-lock.json", "utf8")) as {

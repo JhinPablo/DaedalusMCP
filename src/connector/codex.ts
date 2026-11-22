@@ -20,6 +20,14 @@ export interface PlanningOptions {
   instructions: string;
   schema: Record<string, unknown>;
 }
+export function codexAppServerArgs(platform = process.platform) {
+  return [
+    "app-server",
+    ...(platform === "win32" ? ["-c", "features.prefer_mxc=true"] : []),
+    "--listen",
+    "stdio://",
+  ];
+}
 export class CodexClient {
   private process: ChildProcessWithoutNullStreams;
   private next = 0;
@@ -45,7 +53,7 @@ export class CodexClient {
       if (/(TOKEN|SECRET|PASSWORD|PRIVATE_KEY|API_KEY|ACCESS_KEY)/i.test(key))
         delete env[key];
     delete env.OPENAI_API_KEY;
-    this.process = spawn(command, ["app-server", "--listen", "stdio://"], {
+    this.process = spawn(command, codexAppServerArgs(), {
       cwd,
       env,
       windowsHide: true,
@@ -166,6 +174,18 @@ export class CodexClient {
         "GPT-6 Luna con esfuerzo alto no está disponible en tu sesión de ChatGPT.",
       );
   }
+  async requireExecutionReady(platform = process.platform) {
+    if (platform !== "win32") return;
+    const readiness = await this.request<{ status: string }>(
+      "windowsSandbox/readiness",
+    );
+    if (readiness.status !== "ready")
+      throw new Error(
+        "Codex tiene sesión de ChatGPT, pero su entorno de ejecución de Windows no está listo (" +
+          readiness.status +
+          "). Completa la configuración o actualización del entorno en la aplicación Codex. Las tareas esperarán sin ejecutarse.",
+      );
+  }
   async execute(
     prompt: string,
     cwd: string,
@@ -183,6 +203,7 @@ export class CodexClient {
       );
     await this.initialize();
     await this.account();
+    if (!readOnly) await this.requireExecutionReady();
     if (planning) await this.requireLunaHigh();
     const thread = await this.request<{ thread: { id: string } }>(
       planning?.threadId ? "thread/resume" : "thread/start",
@@ -204,7 +225,7 @@ export class CodexClient {
         },
         baseInstructions:
           planning?.instructions ??
-          "Eres un agente de Daedalus. Cumple exclusivamente la tarea aprobada. No cambies el alcance ni solicites a otro agente aprobar permisos. Daedalus asigna los subagentes como sesiones aisladas: no delegues agentes adicionales. No hagas push ni despliegues. Las skills son instrucciones de trabajo subordinadas al alcance aprobado. Resume cambios y pruebas con evidencia.",
+          "Eres un agente de Daedalus. Cumple exclusivamente la tarea aprobada. Puedes delegar subagentes internos si la herramienta está disponible, limitados a esa tarea y al worktree autorizado. Coordina su trabajo, espera sus resultados y conserva las restricciones de permisos. Ningún subagente concede aprobaciones ni amplía el alcance. No hagas push ni despliegues. Las skills están subordinadas al alcance aprobado. Resume cambios y pruebas con evidencia.",
         developerInstructions: planning
           ? "Esta sesión solo conversa, critica y prepara propuestas. No implementes cambios, no uses herramientas ni delegues subagentes, no concedas aprobaciones. Devuelve el contrato JSON solicitado."
           : readOnly

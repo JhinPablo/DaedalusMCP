@@ -345,6 +345,7 @@ export class Engine {
         (r) =>
           r.sessionId === s.id &&
           r.kind === "review" &&
+          !["failed", "cancelled"].includes(r.status) &&
           r.approvedVersion === currentVersion(s)?.version,
       )
     ) {
@@ -373,7 +374,11 @@ export class Engine {
         this.state.projects.some(
           (x) => x.id === r.projectId && x.connectorId === p.id,
         ) &&
-        (r.kind === "planning" ? (c.planning ?? c.opencode) : c.codex),
+        (r.kind === "planning"
+          ? (c.planning ?? c.opencode)
+          : r.kind === "review"
+            ? c.opencode
+            : c.codex),
     );
     if (!run) return null;
     if (run.kind !== "planning") {
@@ -415,6 +420,7 @@ export class Engine {
     this.assigned(p, r);
     if (terminalStatuses.includes(r.status)) return;
     const s = this.session(r.sessionId);
+    const recoveredTask = r.kind === "task" && r.status === "uncertain";
     r.status = result.status;
     r.output = result.output ?? r.output;
     r.error = result.error;
@@ -476,7 +482,28 @@ export class Engine {
         title: "Revisión final",
         content: r.output,
       });
-    } else this.schedule(s);
+    } else {
+      if (
+        recoveredTask &&
+        s.phase === "paused" &&
+        this.approved(s, "execution") &&
+        currentVersion(s)?.digest === r.approvedDigest &&
+        currentVersion(s)?.version === r.approvedVersion &&
+        !s.tasks.some((t) => t.status === "failed") &&
+        !this.state.runs.some(
+          (other) => other.sessionId === s.id && other.status === "uncertain",
+        )
+      ) {
+        s.phase = "executing";
+        this.event(
+          "session.reconciled",
+          "Resultado confirmado. Continúa el plan aprobado.",
+          s.id,
+          r.id,
+        );
+      }
+      this.schedule(s);
+    }
     for (const other of this.state.sessions.filter(
       (x) => x.id !== s.id && x.phase === "executing",
     ))

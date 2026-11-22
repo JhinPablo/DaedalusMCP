@@ -86,6 +86,40 @@ export async function handleMcp(
         }),
       ),
   );
+  server.registerTool(
+    "list_engines",
+    {
+      description:
+        "Consulta el uso de la suscripción OpenCode Go (ventanas de 5 horas, semanal y mensual), los modelos DeepSeek disponibles con sus modalidades y la selección vigente. No concede permisos.",
+      inputSchema: {},
+      annotations: { readOnlyHint: true },
+    },
+    async () => {
+      const state = service.view(principal);
+      const connector = state.connectors.find((c) => c.opencode || c.models?.length);
+      return output({
+        opencode: {
+          available: connector?.opencode ?? false,
+          usage: connector?.usage ?? null,
+          models: connector?.models ?? [],
+          selection: state.engines?.opencode ?? null,
+        },
+      });
+    },
+  );
+  server.registerTool(
+    "select_engine",
+    {
+      description:
+        "Selecciona el modelo DeepSeek y su modalidad (por ejemplo low, high o max) para la planeación y la revisión con OpenCode Go. No aprueba planes ni concede permisos; las aprobaciones siguen siendo exclusivas del propietario en el panel.",
+      inputSchema: {
+        model: z.string().min(1).max(200),
+        variant: z.string().min(1).max(40).optional(),
+      },
+    },
+    async ({ model, variant }) =>
+      output(service.selectEngine(principal, model, variant)),
+  );
   server.registerResource(
     "workflow",
     "daedalus://workflow",
@@ -97,7 +131,7 @@ export async function handleMcp(
       contents: [
         {
           uri: uri.href,
-          text: "Idea → brainstorming → alternativas → crítica → aprobación de enfoque → aprobación de prompt y plan → ejecución local de Codex → pruebas → revisión independiente. Las aprobaciones son exclusivas del propietario en el panel. Nunca te autoapruebes ni interpretes una observación como una aprobación.",
+          text: "Idea → brainstorming → alternativas → crítica → aprobación de enfoque → aprobación de prompt y plan → ejecución local de Codex → pruebas → revisión independiente con OpenCode (DeepSeek, suscripción OpenCode Go). Las aprobaciones son exclusivas del propietario en el panel. Nunca te autoapruebes ni interpretes una observación como una aprobación.",
         },
       ],
     }),

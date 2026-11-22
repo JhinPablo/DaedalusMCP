@@ -13,7 +13,14 @@ import {
 } from "./releases";
 import { z } from "zod";
 import { Engine, DomainError, digest } from "../shared/engine";
-import { normalizeWorkspace, type Principal, type Workspace } from "../shared/model";
+import {
+  engineSelectionInput,
+  modelOptionSchema,
+  normalizeWorkspace,
+  usageSnapshotSchema,
+  type Principal,
+  type Workspace,
+} from "../shared/model";
 import skillLock from "../../skills-lock.json";
 
 export interface Repository {
@@ -34,6 +41,9 @@ const registration = z.object({
   planning: z.boolean().optional(),
   planningModel: z.string().max(200).optional(),
   model: z.string().max(200).optional(),
+  modelVariant: z.string().max(40).optional(),
+  usage: usageSnapshotSchema.optional(),
+  models: z.array(modelOptionSchema).max(20).optional(),
   error: z.string().max(2000).optional(),
   projects: z.array(z.object({ id: ident, name: short, rootLabel: short })).max(50),
 });
@@ -129,6 +139,43 @@ export class Service {
     const hash = digest(token);
     const c = this.repo.read().credentials.find((c) => c.hash === hash && !c.revokedAt);
     return c ? { id: c.id, role: c.role } : null;
+  }
+  selectEngine(p: Principal, model: string, variant?: string) {
+    if (p.role !== "owner" && p.role !== "mcp")
+      throw new DomainError(
+        403,
+        "Solo el propietario o un cliente MCP pueden seleccionar el motor.",
+      );
+    return this.mutate((e) => {
+      const connector = e.state.connectors.find((c) => c.models?.length);
+      if (!connector?.models?.length)
+        throw new DomainError(
+          409,
+          "El conector debe informar su catálogo antes de seleccionar un motor.",
+        );
+      const match = connector.models.find(
+        (m) => m.id === model || m.providerID + "/" + m.id === model,
+      );
+      if (!match)
+        throw new DomainError(
+          400,
+          "El modelo no está en el catálogo de OpenCode Go del conector.",
+        );
+      if (variant && !match.variants.includes(variant))
+        throw new DomainError(400, "La modalidad no está disponible para este modelo.");
+      e.state.engines ??= {};
+      e.state.engines.opencode = {
+        model: match.id,
+        variant,
+        updatedAt: new Date().toISOString(),
+        updatedBy: p.id,
+      };
+      e.event(
+        "engine.selected",
+        "OpenCode: " + model + (variant ? " · " + variant : ""),
+      );
+      return e.state.engines.opencode;
+    });
   }
   async storeArtifact(key: string, content: string): Promise<"cloud" | "local"> {
     try {
@@ -444,11 +491,16 @@ export class Service {
         });
         return Response.json({ ok: true });
       }
+      if (method === "POST" && path === "/api/engines/opencode") {
+        const body = engineSelectionInput.parse(await readJson(request));
+        return Response.json(this.selectEngine(p, body.model, body.variant));
+      }
       if (method === "POST" && path === "/api/connector/register") {
         if (p.role !== "connector")
           throw new DomainError(403, "Se requiere un conector.");
         const body = registration.parse(await readJson(request));
         this.mutate((e) => {
+          const previous = e.state.connectors.find((x) => x.id === p.id);
           const c = {
             id: p.id,
             name: body.name,
@@ -457,6 +509,9 @@ export class Service {
             planning: body.planning,
             planningModel: body.planningModel,
             model: body.model,
+            modelVariant: body.modelVariant,
+            usage: body.usage ?? previous?.usage,
+            models: body.models ?? previous?.models,
             error: body.error,
             lastSeen: new Date().toISOString(),
           };
@@ -503,6 +558,7 @@ export class Service {
               );
             return {
               run,
+              engines: e.state.engines ?? null,
               relatedRuns: run
                 ? e.state.runs.filter(
                     (r) =>
@@ -610,22 +666,18 @@ export class Service {
           if (["completed", "failed", "cancelled"].includes(run.status))
             return Response.json({ ok: true });
           const key = `artifacts/${runId}/result.md`;
-          const storage = data.output
-            ? await this.storeArtifact(key, data.output)
-            : "cloud";
+          const report = run.kind === "planning" ? undefined : data.output;
+          const storage = report ? await this.storeArtifact(key, report) : "cloud";
           this.mutate((e) => {
             e.finish(p, runId, data);
-            if (
-              data.output &&
-              !e.state.artifacts.some((a) => a.id === runId + "-result")
-            )
+            if (report && !e.state.artifacts.some((a) => a.id === runId + "-result"))
               e.state.artifacts.push({
                 id: runId + "-result",
                 runId,
                 key,
-                name: "resultado.md",
+                name: run.kind === "review" ? "revision-final.md" : "informe-tarea.md",
                 mediaType: "text/markdown",
-                size: new TextEncoder().encode(data.output).length,
+                size: new TextEncoder().encode(report).length,
                 createdAt: new Date().toISOString(),
                 storage,
                 localPath: storage === "local" ? data.localArtifactPath : undefined,

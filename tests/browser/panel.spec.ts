@@ -412,3 +412,83 @@ test("permisos legibles, enlaces de entrega y avisos sin duplicados", async ({
     page.getByRole("alert").filter({ hasText: "Esta preview fue reemplazada" }),
   ).toBeVisible();
 });
+test("uso Go visible en móvil y selección remota de modelo y modalidad", async ({
+  page,
+}) => {
+  const state = emptyWorkspace();
+  state.projects.push({
+    id: "go",
+    name: "Go",
+    rootLabel: "go",
+    connectorId: "go",
+    createdAt: new Date().toISOString(),
+  });
+  const window = {
+    status: "ok",
+    usedPercent: 7,
+    remainingPercent: 93,
+    resetsAt: new Date(Date.now() + 3600000).toISOString(),
+  };
+  state.connectors.push({
+    id: "go",
+    name: "Equipo",
+    codex: true,
+    opencode: true,
+    lastSeen: new Date().toISOString(),
+    model: "deepseek-v4.1-flash",
+    modelVariant: "high",
+    models: [
+      {
+        id: "deepseek-v4.1-flash",
+        providerID: "opencode",
+        name: "DeepSeek Flash",
+        variants: ["low", "high", "max"],
+      },
+      {
+        id: "deepseek-v4-pro",
+        providerID: "opencode",
+        name: "DeepSeek Pro",
+        variants: ["high", "max"],
+      },
+    ],
+    usage: {
+      connected: true,
+      updatedAt: new Date().toISOString(),
+      lastAttemptAt: new Date().toISOString(),
+      windows: { rolling: window, weekly: window, monthly: window },
+    },
+  });
+  await page.route("**/api/state", (route) => route.fulfill({ json: state }));
+  await page.route("**/api/engines/opencode", async (route) => {
+    const selected = route.request().postDataJSON();
+    state.engines = { opencode: { ...selected, updatedAt: new Date().toISOString() } };
+    state.revision++;
+    await route.fulfill({ json: state.engines.opencode });
+  });
+  await page.goto("/");
+  const badge = page.getByRole("button", { name: "Consultar uso de OpenCode Go" });
+  await expect(badge).toContainText("93%");
+  await badge.click();
+  const model = page.getByRole("combobox", { name: "Modelo de planeación y revisión" });
+  const variant = page.getByRole("combobox", { name: "Modalidad de razonamiento" });
+  await expect(variant).toHaveValue("high");
+  await model.selectOption("deepseek-v4-pro");
+  await variant.selectOption("max");
+  await page.getByRole("button", { name: "Aplicar selección" }).click();
+  await expect(model).toHaveValue("deepseek-v4-pro");
+  state.engines = {
+    opencode: {
+      model: "deepseek-v4.1-flash",
+      variant: "low",
+      updatedAt: "2026-11-21T12:00:00Z",
+    },
+  };
+  state.revision++;
+  await page.getByLabel("Actualizar estado").click();
+  await expect(variant).toHaveValue("low");
+  await page.setViewportSize({ width: 390, height: 760 });
+  await expect(badge).toBeVisible();
+  const box = await badge.boundingBox();
+  expect(box!.x).toBeGreaterThanOrEqual(0);
+  expect(box!.x + box!.width).toBeLessThanOrEqual(390);
+});

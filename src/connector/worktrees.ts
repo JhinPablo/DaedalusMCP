@@ -78,4 +78,13 @@ export class Worktrees {
         : "No se generaron cambios nuevos en esta tarea.",
     };
   }
+  async diff(worktree: string, base: string, budget = 24000) {
+    let text = await git(worktree, "diff", "--no-color", base, "HEAD");
+    if (!text) return "Sin cambios respecto a la base aprobada.";
+    if (text.length > budget)
+      text =
+        text.slice(0, budget) +
+        "\n…diff truncado; el worktree local conserva el detalle completo.";
+    return text;
+  }
 }

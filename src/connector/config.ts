@@ -7,7 +7,13 @@ export const configSchema = z.object({
   tokenEnv: z.string().default("DAEDALUS_CONNECTOR_TOKEN"),
   codexCommand: z.string().default("codex"),
   opencodeUrl: z.string().url().default("http://127.0.0.1:4096"),
-  opencodeModel: z.string().default("deepseek-v4.1-flash-free"),
+  opencodeModel: z.string().min(1).max(200).default("deepseek-v4.1-flash"),
+  opencodeVariant: z.string().min(1).max(40).optional(),
+  opencodeAuthFile: z
+    .string()
+    .min(1)
+    .default(".daedalus/opencode/data/opencode/auth.json"),
+  opencodeStatsCommand: z.string().min(1).max(1000).optional(),
   planningFallback: z.enum(["none", "luna-high"]).default("none"),
   publishRepository: z.literal("JhinPablo/DaedalusMCP").optional(),
   releaseControlUrl: z.string().url().startsWith("https://").optional(),
@@ -37,6 +43,7 @@ export async function loadConfig(file: string) {
   const configRoot = path.dirname(path.resolve(file));
   c.skillsRoot = path.resolve(configRoot, c.skillsRoot);
   c.journalRoot = path.resolve(configRoot, c.journalRoot);
+  c.opencodeAuthFile = path.resolve(configRoot, c.opencodeAuthFile);
   const url = new URL(c.serverUrl);
   if (
     url.protocol !== "https:" &&
