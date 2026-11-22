@@ -2,7 +2,7 @@
 
 Un taller web para pasar de una idea a un prompt aprobado y a código verificable.
 
-**OpenCode + DeepSeek gratuito planean. Tú decides. Codex construye y revisa con tu sesión de ChatGPT.** El panel, el MCP y el estado se alojan en Cloudflare; un conector saliente ejecuta los motores en tu equipo.
+**OpenCode Go + DeepSeek planean y revisan. Tú decides. Codex construye y levanta los agentes con tu sesión de ChatGPT.** El panel, el MCP y el estado se alojan en Cloudflare; un conector saliente ejecuta los motores en tu equipo.
 
 El uso habitual ocurre en el panel alojado. Producción y staging son Workers separados en `workers.dev`, protegidos con Access y con SQLite independiente. El repositorio público contiene únicamente código. Consulta [operación estable, publicaciones y migración](docs/deployment.md).
 
@@ -14,6 +14,12 @@ Necesitas Node.js 24, Git y Codex con inicio de sesión de ChatGPT. La CLI `cf` 
 npm ci
 npm run skills:sync
 codex login
+```
+
+Antes de iniciar el servidor, vincula tu suscripción OpenCode Go una sola vez:
+
+```powershell
+npm run opencode:login
 ```
 
 En tres terminales del directorio del proyecto:
@@ -36,9 +42,11 @@ Para el uso habitual con el panel alojado, configura `serverUrl` y las credencia
 
 Abre [Daedalus local](http://127.0.0.1:8787). El conector local lee su credencial de desarrollo desde `.daedalus/dev-connector-token`. Para producción crea una credencial desde **Conexiones** y guárdala en `DAEDALUS_CONNECTOR_TOKEN`; no la añadas al JSON ni al código.
 
-`opencode:serve` usa una instalación de OpenCode incluida en el proyecto y datos aislados en `.daedalus/opencode/`, para conservar intacta tu instalación habitual. Puedes apuntar `opencodeUrl` a un servidor propio. El catálogo debe ofrecer `opencode/deepseek-v4.1-flash-free` con coste de entrada y salida cero. Daedalus observa los errores del proveedor y conserva el plazo de espera de los límites gratuitos en `.daedalus/opencode-availability.json`.
+`opencode:serve` usa una instalación de OpenCode incluida en el proyecto y datos aislados en `.daedalus/opencode/`, para conservar intacta tu instalación habitual. `npm run opencode:login` guarda la credencial de OpenCode Go en ese directorio; nunca se envía a Daedalus. El script configura además la ruta de inferencia de OpenCode Go (`/inference/go/v1`), porque OpenCode solo factura la suscripción por esa ruta. Puedes apuntar `opencodeUrl` a un servidor propio. El catálogo debe ofrecer `opencode/deepseek-v4.1-flash` (o el modelo que configures) con la suscripción activa. El conector consulta `GET https://opencode.ai/inference/go/v1/usage` y envía al panel solo porcentajes usados/restantes, fechas de reinicio, última actualización y estado de conexión. Si la consulta falla, conserva el último dato local y lo muestra con su fecha. Daedalus observa los errores del proveedor y conserva el plazo de espera en `.daedalus/opencode-availability.json`.
 
-Para autorizar el respaldo automático, configura `"planningFallback": "luna-high"` en `connector.local.json`. Si DeepSeek falla, alcanza su cuota o no responde, la misma petición pasa una sola vez a `gpt-6-luna` con esfuerzo `high`, usando Codex App Server con tu sesión de ChatGPT. El panel registra el motivo y el modelo activo. Luna conversa y prepara propuestas en modo de solo lectura; las dos aprobaciones de ejecución siguen siendo obligatorias. Una cancelación no activa el respaldo. Si Luna también falla, el flujo se detiene. El valor predeterminado `none` pausa el flujo sin cambiar de motor. No se usan claves de API ni proveedores de pago de OpenCode.
+El encabezado muestra el porcentaje restante más bajo de OpenCode Go. **Conexiones** detalla las tres ventanas de uso (5 horas, semanal y mensual) y permite elegir el modelo DeepSeek y su modalidad de razonamiento (`low`, `high`, `max`) para la planeación y la revisión. El conector aplica la selección en su siguiente ciclo y conserva el modelo de los turnos activos. La cuota es compartida: cambiar de modelo no restablece una ventana agotada; el flujo espera su reinicio. El consumo local de la CLI de OpenCode (`opencode stats --json --cost`) se muestra como complemento si configuras `opencodeStatsCommand`.
+
+Para autorizar el respaldo automático, configura `"planningFallback": "luna-high"` en `connector.local.json`. Si DeepSeek falla, alcanza su cuota o no responde, la misma petición pasa una sola vez a `gpt-6-luna` con esfuerzo `high`, usando Codex App Server con tu sesión de ChatGPT. El panel registra el motivo y el modelo activo. Luna conversa y prepara propuestas en modo de solo lectura; las dos aprobaciones de ejecución siguen siendo obligatorias. Una cancelación no activa el respaldo. Si Luna también falla, el flujo se detiene. El valor predeterminado `none` pausa el flujo sin cambiar de motor. No se usan claves de API; la planeación principal consume la cuota de OpenCode Go.
 
 Los proyectos de ejecución deben ser repositorios Git con un commit inicial y un árbol limpio. Daedalus no descarta ni incluye automáticamente cambios sin commit. La planeación puede funcionar antes de preparar Git.
 
@@ -49,7 +57,7 @@ Los proyectos de ejecución deben ser repositorios Git con un commit inicial y u
 3. Aprueba el enfoque. Revisa el prompt exacto, el alcance y las tareas del plan.
 4. Aprueba el prompt para iniciar la ejecución. Editarlo crea una versión nueva y exige aprobarla de nuevo.
 5. Sigue los agentes y responde permisos desde el panel **Agentes** junto al chat o desde **Ejecución**. Hasta tres ejecutores trabajan a la vez en worktrees separados.
-6. Consulta resultados, archivos y pruebas. Una sesión independiente de Codex revisa el resultado integrado en modo de solo lectura.
+6. Consulta resultados, archivos y pruebas. OpenCode (DeepSeek, con la suscripción OpenCode Go) revisa el resultado integrado sin herramientas y entrega un informe con veredicto estructurado. Solo `pass` completa la revisión; `changes_requested`, `blocked` o una respuesta inválida pausan el flujo. El propietario puede reanudar para solicitar otra revisión sin repetir las tareas terminadas.
 
 Las ramas se conservan como `daedalus/<run-id>`. La rama de la revisión contiene la integración del trabajo completado. La rama original del proyecto permanece intacta: revisa e integra esa rama con tu flujo Git habitual. No hay push ni despliegue automático del código generado.
 
@@ -73,7 +81,7 @@ npm run test:engines
 npm run test:live
 ```
 
-Estas dos pruebas son opcionales y utilizan los motores reales: consumen la cuota de tu suscripción y del modelo gratuito. `test:live` crea un repositorio aislado bajo `.daedalus/`, planea un archivo de prueba con DeepSeek, simula los dos hitos de autorización del escenario de pruebas y ejecuta una tarea y una revisión con Codex. No cambia los proyectos del usuario ni concede permisos adicionales automáticamente.
+Estas dos pruebas son opcionales y utilizan los motores reales: consumen la cuota de tu suscripción OpenCode Go y de tu sesión de ChatGPT. `scripts/smoke-flow.ts` crea un repositorio aislado bajo `.daedalus/`, planea un archivo de prueba con DeepSeek, simula los dos hitos de autorización del escenario de pruebas, ejecuta una tarea con Codex y solicita una revisión a DeepSeek. No cambia los proyectos del usuario ni concede permisos adicionales automáticamente.
 
 Para ver el build final local: `npm run preview`, en [localhost:8788](http://127.0.0.1:8788).
 
@@ -105,7 +113,7 @@ Las solicitudes de permiso muestran motivo, comando, carpeta y alcance en campos
 
 Endpoint: `https://tu-dominio/mcp`, transporte Streamable HTTP. Configura los encabezados `Authorization: Bearer <credencial-MCP>`, `CF-Access-Client-Id` y `CF-Access-Client-Secret`.
 
-Herramientas: `get_context`, `propose_plan`, `get_run` y `record_observation`. No hay herramientas MCP para aprobar planes, conceder permisos, ejecutar comandos arbitrarios ni suplantar un resultado de Codex.
+Herramientas: `get_context`, `propose_plan`, `get_run`, `record_observation`, `list_engines` y `select_engine`. `list_engines` consulta el uso de OpenCode Go, el catálogo DeepSeek con sus modalidades y la selección vigente; `select_engine` cambia el modelo y la modalidad de planeación y revisión. No hay herramientas MCP para aprobar planes, conceder permisos, ejecutar comandos arbitrarios ni suplantar un resultado de Codex.
 
 ## Skills y procedencia
 
