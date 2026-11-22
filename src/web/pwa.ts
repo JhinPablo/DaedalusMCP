@@ -26,7 +26,19 @@ export async function registerPwa() {
   await navigator.serviceWorker.register("/notifications-sw.js", { scope: "/" });
   return await navigator.serviceWorker.ready;
 }
-export async function subscribePush(sound: boolean) {
+let subscriptionOperations: Promise<unknown> = Promise.resolve();
+function ordered<T>(operation: () => Promise<T>) {
+  const result = subscriptionOperations.then(operation);
+  subscriptionOperations = result.catch(() => {});
+  return result;
+}
+export function subscribePush(sound: boolean) {
+  return ordered(() => saveSubscription(sound));
+}
+export function unsubscribePush() {
+  return ordered(removeSubscription);
+}
+async function saveSubscription(sound: boolean) {
   const registration = await registerPwa();
   const { publicKey } = await request<{ publicKey: string }>("/push/key");
   const binary = atob(publicKey.replaceAll("-", "+").replaceAll("_", "/"));
@@ -39,7 +51,7 @@ export async function subscribePush(sound: boolean) {
     }));
   await request("/push/subscribe", { subscription: subscription.toJSON(), sound });
 }
-export async function unsubscribePush() {
+async function removeSubscription() {
   const registration = await registerPwa(),
     subscription = await registration.pushManager.getSubscription();
   if (subscription) {
