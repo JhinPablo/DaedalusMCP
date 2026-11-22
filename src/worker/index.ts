@@ -7,6 +7,8 @@ import { readJson } from "../server/service";
 import { digest, DomainError } from "../shared/engine";
 import { normalizeWorkspace, type Workspace, activeStatuses } from "../shared/model";
 import { handleMcp } from "../server/mcp";
+import { PushDelivery } from "./push";
+import { workspaceNotices } from "../web/notifications";
 
 export interface Env {
   WORKSPACE: DurableObjectNamespace<WorkspaceObject>;
@@ -24,12 +26,20 @@ export interface Env {
 const accessKeys = new Map<string, ReturnType<typeof createRemoteJWKSet>>();
 export class WorkspaceObject extends DurableObject<Env> {
   private service: Service;
+  private push: PushDelivery;
+  private noticeIds = new Set<string>();
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
+    this.push = new PushDelivery(ctx.storage);
     this.service = new Service(
       new SqliteRepository(ctx.storage),
       new SqliteBlobs(ctx.storage),
       () => {
+        const notices = workspaceNotices(this.service.repo.read());
+        const fresh = notices.filter((n) => !this.noticeIds.has(n.id));
+        this.noticeIds = new Set(notices.map((n) => n.id));
+        if (this.push.enqueue(fresh))
+          ctx.waitUntil(ctx.storage.setAlarm(Date.now() + 100));
         for (const ws of ctx.getWebSockets()) {
           try {
             ws.send(JSON.stringify({ type: "changed" }));
@@ -44,6 +54,12 @@ export class WorkspaceObject extends DurableObject<Env> {
         stagingUrl: env.STAGING_URL,
       },
     );
+    this.noticeIds = new Set(
+      workspaceNotices(this.service.repo.read()).map((n) => n.id),
+    );
+  }
+  async alarm() {
+    await this.push.deliver();
   }
   async authenticate(token: string) {
     return this.service.authenticate(token);
@@ -55,6 +71,35 @@ export class WorkspaceObject extends DurableObject<Env> {
       ) as Principal | null;
       if (!principal) return new Response("Unauthorized", { status: 401 });
       const path = new URL(request.url).pathname;
+      if (path.startsWith("/api/push/")) {
+        if (principal.role !== "owner")
+          return new Response("Forbidden", { status: 403 });
+        if (path === "/api/push/key" && request.method === "GET")
+          return Response.json({ publicKey: (await this.push.keys()).publicKey });
+        if (request.method === "POST") {
+          const body = await readJson(request);
+          if (path === "/api/push/subscribe") this.push.subscribe(body);
+          else if (path === "/api/push/unsubscribe") this.push.unsubscribe(body);
+          else if (path === "/api/push/test") {
+            const endpoint = (body as { endpoint?: unknown }).endpoint;
+            if (typeof endpoint !== "string" || endpoint.length > 2048)
+              throw new DomainError(400, "Falta el dispositivo de prueba.");
+            this.push.enqueue(
+              [
+                {
+                  id: "test:" + crypto.randomUUID(),
+                  title: "Daedalus está conectado",
+                  body: "Los avisos push están activados en este dispositivo.",
+                },
+              ],
+              endpoint,
+            );
+            await this.ctx.storage.setAlarm(Date.now() + 100);
+          } else return new Response("Not found", { status: 404 });
+          return Response.json({ ok: true });
+        }
+        return new Response("Method not allowed", { status: 405 });
+      }
       if (path === "/api/migration" && request.method === "POST") {
         if (principal.role !== "migration")
           return new Response("Forbidden", { status: 403 });
@@ -223,7 +268,13 @@ export default {
       if (!api) {
         if (principal.role !== "owner")
           return new Response("Forbidden", { status: 403 });
-        return env.ASSETS.fetch(request);
+        const asset = await env.ASSETS.fetch(request);
+        if (["/notifications-sw.js", "/manifest.webmanifest"].includes(url.pathname)) {
+          const response = new Response(asset.body, asset);
+          response.headers.set("Cache-Control", "no-cache");
+          return response;
+        }
+        return asset;
       }
       const headers = new Headers(request.headers);
       headers.set("X-Daedalus-Principal", JSON.stringify(principal));

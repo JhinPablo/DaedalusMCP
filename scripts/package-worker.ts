@@ -40,6 +40,10 @@ await copyFile(
   "node_modules/@fontsource/ibm-plex-mono/LICENSE",
   "dist/client/licenses/ibm-plex-mono.txt",
 );
+await copyFile(
+  "node_modules/@block65/webcrypto-web-push/LICENSE.md",
+  "dist/client/licenses/webcrypto-web-push.txt",
+);
 await writeWorkerConfig({
   root,
   config,

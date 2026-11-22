@@ -264,6 +264,7 @@ test("permisos legibles, enlaces de entrega y avisos sin duplicados", async ({
     ({ sessionId }) => {
       localStorage.setItem("daedalus:v1:selected-session", JSON.stringify(sessionId));
       const notices: Array<{ title: string; tag?: string }> = [];
+      Reflect.deleteProperty(window, "PushManager");
       Object.assign(window, { __notices: notices });
       class FakeNotification {
         static permission = "default";
@@ -491,4 +492,110 @@ test("uso Go visible en móvil y selección remota de modelo y modalidad", async
   const box = await badge.boundingBox();
   expect(box!.x).toBeGreaterThanOrEqual(0);
   expect(box!.x + box!.width).toBeLessThanOrEqual(390);
+});
+
+test("PWA manifest, installation control and private offline fallback", async ({
+  page,
+  context,
+}) => {
+  await page.goto("/");
+  await page.evaluate(async () => {
+    await navigator.serviceWorker.ready;
+  });
+  await expect
+    .poll(() => page.evaluate(() => !!navigator.serviceWorker.controller))
+    .toBe(true);
+  const manifest = await page.request
+    .get("/manifest.webmanifest")
+    .then((r) => r.json());
+  expect(manifest.display).toBe("standalone");
+  expect(manifest.icons.map((i: { sizes: string }) => i.sizes)).toContain("512x512");
+  for (const icon of manifest.icons)
+    expect((await page.request.get(icon.src)).ok()).toBe(true);
+  await page.getByLabel("Configuración", { exact: true }).click();
+  await expect(
+    page.getByRole("checkbox", { name: "Sonido de notificaciones" }),
+  ).toBeVisible();
+  await page.evaluate(() => {
+    const event = new Event("beforeinstallprompt");
+    Object.assign(event, {
+      prompt: async () => {},
+      userChoice: Promise.resolve({ outcome: "accepted" }),
+    });
+    window.dispatchEvent(event);
+  });
+  await page.getByRole("button", { name: "Instalar Daedalus" }).click();
+  await expect(page.getByRole("button", { name: "Instalar Daedalus" })).toHaveCount(0);
+  await context.setOffline(true);
+  try {
+    await page.goto("/offline-check");
+    await expect(
+      page.getByRole("heading", { name: "Tu taller sigue aquí" }),
+    ).toBeVisible();
+    await expect(
+      page.getByText("No se muestran copias privadas sin conexión.", { exact: false }),
+    ).toBeVisible();
+  } finally {
+    await context.setOffline(false);
+  }
+});
+
+test("push opt-in, sound preferences and remote unsubscribe", async ({ page }) => {
+  const requests: Array<{ path: string; body: Record<string, unknown> }> = [];
+  await page.route("**/api/push/**", async (route) => {
+    const path = new URL(route.request().url()).pathname;
+    if (route.request().method() === "POST")
+      requests.push({ path, body: route.request().postDataJSON() });
+    await route.fulfill({
+      json: path.endsWith("/key") ? { publicKey: "B".repeat(87) } : { ok: true },
+    });
+  });
+  await page.addInitScript(() => {
+    const subscription = {
+      endpoint: "https://fcm.googleapis.com/fcm/send/browser-test",
+      toJSON: () => ({
+        endpoint: "https://fcm.googleapis.com/fcm/send/browser-test",
+        expirationTime: null,
+        keys: { auth: "a".repeat(22), p256dh: "b".repeat(87) },
+      }),
+      unsubscribe: async () => true,
+    };
+    const registration = {
+      pushManager: {
+        getSubscription: async () => subscription,
+        subscribe: async () => subscription,
+      },
+    };
+    Object.defineProperty(navigator, "serviceWorker", {
+      value: {
+        register: async () => registration,
+        ready: Promise.resolve(registration),
+        addEventListener: () => {},
+        removeEventListener: () => {},
+      },
+    });
+    Object.defineProperty(window, "Notification", {
+      value: class {
+        static permission = "default";
+        static requestPermission = async () => "granted";
+      },
+    });
+  });
+  await page.goto("/");
+  await page.getByLabel("Configuración", { exact: true }).click();
+  await page.getByRole("button", { name: "Activar notificaciones" }).click();
+  await expect(page.getByText("Push conectado:", { exact: false })).toBeVisible();
+  await page.getByRole("checkbox", { name: "Sonido de notificaciones" }).uncheck();
+  await expect
+    .poll(() =>
+      requests.some((r) => r.path.endsWith("/subscribe") && r.body.sound === false),
+    )
+    .toBe(true);
+  await page.getByRole("button", { name: "Probar notificación push" }).click();
+  await expect.poll(() => requests.some((r) => r.path.endsWith("/test"))).toBe(true);
+  await page.getByRole("button", { name: "Pausar avisos" }).click();
+  await expect(
+    page.getByRole("button", { name: "Activar notificaciones" }),
+  ).toBeVisible();
+  expect(requests.some((r) => r.path.endsWith("/unsubscribe"))).toBe(true);
 });

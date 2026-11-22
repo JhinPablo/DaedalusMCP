@@ -118,6 +118,27 @@ it("la migración inicial es acotada, idempotente y no concede autoridad humana"
     ).status,
   ).toBe(403);
 });
+it("keeps push credentials private and only allows the panel owner to register devices", async () => {
+  const namespace = await mf.getDurableObjectNamespace("WORKSPACE");
+  const stub = namespace.get(namespace.idFromName("push-test"));
+  for (const role of ["connector", "mcp", "ci", "publisher"]) {
+    const r = await stub.fetch("https://internal/api/push/key", {
+      headers: { "X-Daedalus-Principal": JSON.stringify({ role, id: "device" }) },
+    });
+    expect(r.status).toBe(403);
+  }
+  const headers = {
+    "X-Daedalus-Principal": JSON.stringify({ role: "owner", id: "owner" }),
+  };
+  const first = await stub
+    .fetch("https://internal/api/push/key", { headers })
+    .then((r) => r.json());
+  const second = await stub
+    .fetch("https://internal/api/push/key", { headers })
+    .then((r) => r.json());
+  expect(Object.keys(first as object)).toEqual(["publicKey"]);
+  expect(first).toEqual(second);
+});
 it("el Worker no acepta un principal inyectado por un cliente anónimo", async () => {
   const response = await mf.dispatchFetch("https://daedalus.test/api/state", {
     headers: {

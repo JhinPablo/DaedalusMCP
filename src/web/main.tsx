@@ -13,6 +13,10 @@ import "./glass/glass.css";
 import { initializeAppearance } from "./Appearance";
 const AnimatedBackground = React.lazy(() => import("./background/AnimatedBackground"));
 initializeAppearance();
+if ("serviceWorker" in navigator)
+  void navigator.serviceWorker
+    .register("/notifications-sw.js", { scope: "/" })
+    .catch(() => {});
 createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
     <React.Suspense fallback={null}>

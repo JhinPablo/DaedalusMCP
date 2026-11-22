@@ -107,7 +107,7 @@ Con `publishRepository` configurado, cada tarea completada publica su commit en 
 
 Al terminar el plan y la revisión, se prepara el PR. CI verifica el candidato y despliega el artefacto en el staging privado. El chat recibe los enlaces al diff y a la preview únicamente después de comprobar el despliegue. Staging es un entorno compartido, no una rama: su enlace incluye el commit esperado y avisa cuando otro candidato lo reemplaza. Producción requiere aprobación del propietario.
 
-En Configuración → Notificaciones, «Activar notificaciones» solicita permiso al navegador mediante una acción del usuario. Avisa de permisos pendientes, finalización, fallos y previews listas; al pulsar el aviso abre el chat correspondiente. No muestra comandos ni conversaciones en el aviso. Las preferencias y la deduplicación se guardan por navegador y entorno. Se requiere mantener Daedalus abierto; no se implementa Web Push con el navegador cerrado. En iPhone/iPad, se utiliza desde la pantalla de inicio.
+En Configuración → Notificaciones, «Activar notificaciones» solicita permiso al navegador mediante una acción del usuario. Avisa de permisos pendientes, finalización, fallos y previews listas; al pulsar el aviso abre el chat correspondiente. No muestra comandos ni conversaciones en el aviso. Las preferencias y suscripciones se guardan por navegador y entorno. Web Push permite avisos con el panel cerrado; consulta los detalles de PWA al final. En iPhone/iPad, se utiliza desde la pantalla de inicio.
 
 Las solicitudes de permiso muestran motivo, comando, carpeta y alcance en campos legibles. El JSON completo sigue disponible como detalle técnico y la decisión conserva las mismas reglas de autorización.
 
@@ -124,3 +124,13 @@ Herramientas: `get_context`, `propose_plan`, `get_run`, `record_observation`, `l
 Las fuentes completas permanecen localmente y el lock registra sus revisiones. Los artefactos de texto pequeños se guardan en SQLite; los grandes permanecen locales. Cambiar una revisión de skill es una actualización explícita del lock.
 
 Consulta [arquitectura y recuperación](docs/architecture.md). Datos de ejecución, credenciales, worktrees y reportes locales están en `.daedalus/`, excluido de Git.
+
+## PWA y avisos push
+
+Daedalus se puede instalar desde el botón **Instalar Daedalus** de Configuración cuando el navegador lo ofrece. En iPhone/iPad usa Safari → Compartir → Añadir a pantalla de inicio y abre la app instalada (iOS/iPadOS 16.4 o posterior para push).
+
+En **Configuración**, pulsa **Activar notificaciones** y acepta el permiso del navegador. Cada dispositivo tiene su propia suscripción. **Probar notificación push** envía un aviso a ese dispositivo; **Pausar avisos** elimina su suscripción remota y su cola pendiente. **Sonido de notificaciones** controla el tono de la app abierta y solicita avisos no silenciosos en segundo plano. El sonido del sistema depende del navegador, permisos, volumen y modos de concentración/silencio; una PWA no puede imponer un archivo de sonido propio cuando está cerrada.
+
+Cloudflare conserva las suscripciones y una cola SQLite separada del workspace, con entrega Web Push cifrada, VAPID generado por entorno y reintentos acotados mediante alarmas del Durable Object. La clave privada no se expone al panel ni al MCP. Se admiten hasta diez dispositivos; suscripciones caducadas se eliminan al recibir 404/410. Los avisos contienen mensajes genéricos, sin comandos ni conversaciones. La entrega depende de la red y del servicio push del navegador; los reintentos pueden reemplazar un aviso con la misma etiqueta. Ningún aviso concede permisos: al pulsarlo se abre el chat para decidir desde el panel.
+
+La pantalla sin conexión es genérica: el service worker no guarda chats, respuestas de API ni pantallas de autenticación. Una sesión de Cloudflare Access caducada debe renovarse al abrir la app. Las tareas locales siguen necesitando el PC y su conector disponibles. Genera de nuevo los iconos con `npx tsx scripts/generate-pwa-icons.ts`.
