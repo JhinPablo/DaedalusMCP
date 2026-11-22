@@ -20,6 +20,14 @@ export interface PlanningOptions {
   instructions: string;
   schema: Record<string, unknown>;
 }
+export function codexAppServerArgs(platform = process.platform) {
+  return [
+    "app-server",
+    ...(platform === "win32" ? ["-c", "features.prefer_mxc=true"] : []),
+    "--listen",
+    "stdio://",
+  ];
+}
 export class CodexClient {
   private process: ChildProcessWithoutNullStreams;
   private next = 0;
@@ -45,7 +53,7 @@ export class CodexClient {
       if (/(TOKEN|SECRET|PASSWORD|PRIVATE_KEY|API_KEY|ACCESS_KEY)/i.test(key))
         delete env[key];
     delete env.OPENAI_API_KEY;
-    this.process = spawn(command, ["app-server", "--listen", "stdio://"], {
+    this.process = spawn(command, codexAppServerArgs(), {
       cwd,
       env,
       windowsHide: true,

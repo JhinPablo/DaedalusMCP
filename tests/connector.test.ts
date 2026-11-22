@@ -3,7 +3,18 @@ import { inside } from "../src/connector/config";
 import { OpenCodeClient, modelRef, parsePlannerReply } from "../src/connector/opencode";
 import path from "node:path";
 import { ExecutionOutcomeError } from "../src/connector/outcome";
-import { CodexClient } from "../src/connector/codex";
+import { CodexClient, codexAppServerArgs } from "../src/connector/codex";
+
+it("prefers native Windows isolation only for the local App Server process", () => {
+  expect(codexAppServerArgs("win32")).toEqual([
+    "app-server",
+    "-c",
+    "features.prefer_mxc=true",
+    "--listen",
+    "stdio://",
+  ]);
+  expect(codexAppServerArgs("linux")).toEqual(["app-server", "--listen", "stdio://"]);
+});
 
 it("does not advertise an unprovisioned Windows executor as ready", async () => {
   const client = Object.create(CodexClient.prototype) as CodexClient;
