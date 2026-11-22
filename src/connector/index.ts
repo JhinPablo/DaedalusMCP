@@ -158,7 +158,6 @@ async function probe() {
     try {
       await c.initialize();
       await c.account();
-      codex = true;
       if (config.planningFallback === "luna-high") {
         try {
           await c.requireLunaHigh();
@@ -167,6 +166,8 @@ async function probe() {
           errors.push(error instanceof Error ? error.message : String(error));
         }
       }
+      await c.requireExecutionReady();
+      codex = true;
     } finally {
       c.close();
     }

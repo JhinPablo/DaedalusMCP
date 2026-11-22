@@ -166,6 +166,18 @@ export class CodexClient {
         "GPT-6 Luna con esfuerzo alto no está disponible en tu sesión de ChatGPT.",
       );
   }
+  async requireExecutionReady(platform = process.platform) {
+    if (platform !== "win32") return;
+    const readiness = await this.request<{ status: string }>(
+      "windowsSandbox/readiness",
+    );
+    if (readiness.status !== "ready")
+      throw new Error(
+        "Codex tiene sesión de ChatGPT, pero su entorno de ejecución de Windows no está listo (" +
+          readiness.status +
+          "). Completa la configuración o actualización del entorno en la aplicación Codex. Las tareas esperarán sin ejecutarse.",
+      );
+  }
   async execute(
     prompt: string,
     cwd: string,
@@ -183,6 +195,7 @@ export class CodexClient {
       );
     await this.initialize();
     await this.account();
+    if (!readOnly) await this.requireExecutionReady();
     if (planning) await this.requireLunaHigh();
     const thread = await this.request<{ thread: { id: string } }>(
       planning?.threadId ? "thread/resume" : "thread/start",

@@ -31,6 +31,7 @@ await check("Codex · ChatGPT", async () => {
   try {
     await c.initialize();
     await c.account();
+    await c.requireExecutionReady();
     return "App Server disponible y autenticado con ChatGPT.";
   } finally {
     c.close();

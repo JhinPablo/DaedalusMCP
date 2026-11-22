@@ -3,6 +3,19 @@ import { inside } from "../src/connector/config";
 import { OpenCodeClient, modelRef, parsePlannerReply } from "../src/connector/opencode";
 import path from "node:path";
 import { ExecutionOutcomeError } from "../src/connector/outcome";
+import { CodexClient } from "../src/connector/codex";
+
+it("does not advertise an unprovisioned Windows executor as ready", async () => {
+  const client = Object.create(CodexClient.prototype) as CodexClient;
+  const request = vi.spyOn(client, "request");
+  request.mockResolvedValue({ status: "updateRequired" });
+  await expect(client.requireExecutionReady("win32")).rejects.toThrow("no está listo");
+  request.mockResolvedValue({ status: "ready" });
+  await expect(client.requireExecutionReady("win32")).resolves.toBeUndefined();
+  request.mockClear();
+  await client.requireExecutionReady("linux");
+  expect(request).not.toHaveBeenCalled();
+});
 it("limita rutas por componentes y no por prefijos", () => {
   const root = path.resolve("project");
   expect(inside(root, path.join(root, "src", "index.ts"))).toBe(true);
