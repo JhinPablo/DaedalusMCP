@@ -1,11 +1,55 @@
-import { proposalInput, type Proposal } from "../shared/model";
+import { proposalInput, type ModelOption, type Proposal } from "../shared/model";
 import { z } from "zod";
 import { readFile, writeFile } from "node:fs/promises";
+import { ExecutionOutcomeError } from "./outcome";
+const reviewReply = z.object({
+  verdict: z.enum(["pass", "changes_requested", "blocked"]),
+  report: z.string().min(1).max(60000),
+});
 export const plannerReply = z.object({
   kind: z.enum(["message", "proposal"]),
   message: z.string().min(1).max(30000),
   proposal: proposalInput.optional(),
 });
+
+export function modelRef(value: string) {
+  const separator = value.indexOf("/");
+  if (separator > 0)
+    return {
+      providerID: value.slice(0, separator),
+      modelID: value.slice(separator + 1),
+      label: value,
+    };
+  return { providerID: "opencode", modelID: value, label: "opencode/" + value };
+}
+
+interface ProvidersResponse {
+  providers: Array<{
+    id: string;
+    models: Record<
+      string,
+      {
+        name?: string;
+        variants?: Record<string, unknown>;
+        cost?: { input: number; output: number };
+      }
+    >;
+  }>;
+}
+
+export function deepseekOptions(providers: ProvidersResponse): ModelOption[] {
+  const provider = providers.providers.find((p) => p.id === "opencode");
+  if (!provider) return [];
+  return Object.entries(provider.models)
+    .filter(([id]) => /^deepseek/i.test(id) && !/free$/i.test(id))
+    .map(([id, model]) => ({
+      id,
+      providerID: "opencode",
+      name: model.name ?? id,
+      variants: Object.keys(model.variants ?? {}),
+      cost: model.cost,
+    }));
+}
 
 export function parsePlannerReply(output: string, structured?: unknown) {
   let data = structured;
@@ -30,11 +74,38 @@ export function parsePlannerReply(output: string, structured?: unknown) {
 export class OpenCodeClient {
   private blockedUntil = 0;
   private blockReason = "";
+  private providerID: string;
+  private modelID: string;
   constructor(
     private url: string,
-    private modelId: string,
+    model: string,
     private statusFile?: string,
-  ) {}
+    private variant?: string,
+  ) {
+    const ref = modelRef(model);
+    this.providerID = ref.providerID;
+    this.modelID = ref.modelID;
+  }
+  setModel(model: string, variant?: string) {
+    const ref = modelRef(model);
+    this.providerID = ref.providerID;
+    this.modelID = ref.modelID;
+    this.variant = variant;
+    this.blockedUntil = 0;
+    this.blockReason = "";
+  }
+  async synchronizeCredential(provider: string, credential: Record<string, unknown>) {
+    const response = await fetch(this.url + "/auth/" + encodeURIComponent(provider), {
+      method: "PUT",
+      headers: await this.headers(),
+      body: JSON.stringify(credential),
+      signal: AbortSignal.timeout(10000),
+    });
+    if (!response.ok)
+      throw new Error(
+        `OpenCode no pudo actualizar su credencial local (${response.status}).`,
+      );
+  }
   private async headers() {
     const headers: Record<string, string> = { "Content-Type": "application/json" };
     if (process.env.OPENCODE_SERVER_PASSWORD)
@@ -58,39 +129,47 @@ export class OpenCodeClient {
     return res.json() as Promise<T>;
   }
   async available() {
-    if (!/^deepseek[\w.-]*-free$/.test(this.modelId))
-      throw new Error("Selecciona un identificador DeepSeek gratuito explícito.");
+    if (!/^deepseek[\w.-]*$/i.test(this.modelID))
+      throw new Error(
+        "El planificador debe usar un modelo DeepSeek explícito de OpenCode Go.",
+      );
+    if (/free$/i.test(this.modelID))
+      throw new Error(
+        "El modelo seleccionado es gratuito. Configura un modelo DeepSeek de la suscripción OpenCode Go.",
+      );
+    let blockedUntil = this.blockedUntil;
+    let blockReason = this.blockReason;
     if (this.statusFile) {
       try {
         const saved = JSON.parse(await readFile(this.statusFile, "utf8"));
         if (
           saved.url === this.url &&
-          saved.model === this.modelId &&
+          saved.model === this.providerID + "/" + this.modelID &&
           Number.isFinite(saved.until) &&
-          saved.until > this.blockedUntil
+          saved.until > blockedUntil
         ) {
-          this.blockedUntil = saved.until;
-          this.blockReason = String(saved.reason);
+          blockedUntil = saved.until;
+          blockReason = String(saved.reason);
         }
       } catch {
         /* No previous provider restriction. */
       }
     }
-    if (Date.now() < this.blockedUntil) throw new Error(this.blockReason);
-    const providers = await this.call<{
-      providers: Array<{
-        id: string;
-        models: Record<string, { cost?: { input: number; output: number } }>;
-      }>;
-    }>("/config/providers");
-    const model = providers.providers.find((p) => p.id === "opencode")?.models[
-      this.modelId
-    ];
-    if (!model || !model.cost || model.cost.input !== 0 || model.cost.output !== 0)
+    if (Date.now() < blockedUntil) throw new Error(blockReason);
+    const providers = await this.call<ProvidersResponse>("/config/providers");
+    const provider = providers.providers.find((p) => p.id === this.providerID);
+    const model = provider?.models[this.modelID];
+    if (!model)
       throw new Error(
-        "DeepSeek gratuito no está disponible con coste cero en OpenCode. No se usará otro modelo.",
+        `El modelo ${this.providerID}/${this.modelID} no está disponible en OpenCode. Inicia sesión en OpenCode Go o revisa opencodeModel.`,
       );
-    return true;
+    if (this.providerID !== "opencode")
+      throw new Error(
+        "Selecciona un modelo del catálogo OpenCode Go configurado para este conector.",
+      );
+    if (this.variant && !Object.hasOwn(model.variants ?? {}, this.variant))
+      throw new Error("La modalidad no está disponible para este modelo.");
+    return deepseekOptions(providers);
   }
   private async watchFailures(sessionId: string, controller: AbortController) {
     const response = await fetch(this.url + "/event", {
@@ -117,24 +196,28 @@ export class OpenCodeClient {
           const event = JSON.parse(data);
           if (event.properties?.sessionID !== sessionId) continue;
           const status = event.properties.status;
+          const reason = String(status?.action?.reason ?? "");
           if (
             event.type === "session.status" &&
-            status?.action?.reason === "free_tier_limit"
+            /free_tier_limit|limit|quota|exhaust/i.test(reason)
           ) {
             this.blockedUntil =
               Number.isFinite(status.next) && status.next > Date.now()
                 ? status.next
                 : Date.now() + 60000;
             this.blockReason =
-              "DeepSeek V4.1 Flash Free: límite gratuito alcanzado en OpenCode. Planeación pausada hasta " +
+              (reason === "free_tier_limit"
+                ? "OpenCode: límite del modelo gratuito alcanzado."
+                : "OpenCode Go: límite de la suscripción alcanzado.") +
+              " Planeación pausada hasta " +
               new Date(this.blockedUntil).toISOString() +
-              ". No se usará un modelo de pago.";
+              ".";
             if (this.statusFile)
               await writeFile(
                 this.statusFile,
                 JSON.stringify({
                   url: this.url,
-                  model: this.modelId,
+                  model: this.providerID + "/" + this.modelID,
                   until: this.blockedUntil,
                   reason: this.blockReason,
                 }),
@@ -161,13 +244,18 @@ export class OpenCodeClient {
       }),
     };
   }
-  async plan(
+  private async converse(
+    title: string,
+    system: string,
     prompt: string,
     directory: string,
     signal: AbortSignal,
     onSession: (id: string) => Promise<void>,
     sessionId?: string,
-  ): Promise<{ proposal?: Proposal; reply?: string; output: string }> {
+  ): Promise<{
+    info: { structured?: unknown };
+    parts: Array<{ type: string; text?: string }>;
+  }> {
     await this.available();
     const monitor = new AbortController();
     signal = AbortSignal.any([signal, monitor.signal, AbortSignal.timeout(180000)]);
@@ -177,7 +265,7 @@ export class OpenCodeClient {
       : await this.call<{ id: string }>(
           "/session" + query,
           {
-            title: "Daedalus · planeación",
+            title,
             permission: [{ permission: "*", pattern: "*", action: "deny" }],
           },
           signal,
@@ -197,7 +285,11 @@ export class OpenCodeClient {
       }>(
         "/session/" + session.id + "/message" + query,
         {
-          model: { providerID: "opencode", modelID: this.modelId },
+          model: {
+            providerID: this.providerID,
+            modelID: this.modelID,
+          },
+          ...(this.variant ? { variant: this.variant } : {}),
           agent: "plan",
           tools: {
             bash: false,
@@ -208,29 +300,22 @@ export class OpenCodeClient {
             shell: false,
             subagent: false,
           },
-          system:
-            "Eres el agente conversacional y planificador de Daedalus. Responde en español. Para una pregunta, un saludo o si falta una decisión importante, devuelve kind=message, message con tu respuesta o una sola pregunta útil y omite por completo el campo proposal. No inventes un plan para un saludo. Si el usuario pide una propuesta y el objetivo ya es concreto y verificable, devuelve kind=proposal con al menos dos alternativas, crítica, recomendación y un plan ejecutable; no hagas preguntas innecesarias. TU sesión no implementa código, ejecuta herramientas ni aprueba ejecución. El campo proposal.prompt es una instrucción imperativa que Codex ejecutará DESPUÉS de la aprobación humana: debe ordenar implementar y verificar, no esperar otra aprobación ni volver a planear. El conector realiza los commits locales de integración; no los prohíbas como criterio global. Cada tarea tiene áreas relativas al proyecto, criterios verificables y dependencias sin ciclos. No inventes pruebas realizadas. Devuelve exclusivamente JSON válido con este esquema: " +
-            JSON.stringify(z.toJSONSchema(plannerReply)),
-          // Validate locally: OpenCode 1.19.5 can fail to hydrate stored JSON-schema class instances.
+          system,
           parts: [{ type: "text", text: prompt }],
         },
         signal,
       );
       if (result.info.error)
         throw new Error(
-          "OpenCode no pudo completar la planeación: " +
+          "OpenCode no pudo completar el turno: " +
             JSON.stringify(result.info.error).slice(0, 1000),
         );
-      const output = result.parts
-        .filter((p) => p.type === "text")
-        .map((p) => p.text ?? "")
-        .join("\n");
-      return parsePlannerReply(output, result.info.structured);
+      return result;
     } catch (error) {
       if (monitor.signal.aborted) throw monitor.signal.reason;
       if (signal.aborted && signal.reason?.name === "TimeoutError")
         throw new Error(
-          "OpenCode no respondió dentro del plazo. Comprueba la disponibilidad y el límite de DeepSeek gratuito. No se ha cambiado a un proveedor de pago.",
+          "OpenCode no respondió dentro del plazo. Comprueba la disponibilidad y el límite de la suscripción OpenCode Go.",
         );
       throw error;
     } finally {
@@ -238,5 +323,56 @@ export class OpenCodeClient {
       monitor.abort();
       await events?.finished;
     }
+  }
+  async plan(
+    prompt: string,
+    directory: string,
+    signal: AbortSignal,
+    onSession: (id: string) => Promise<void>,
+    sessionId?: string,
+  ): Promise<{ proposal?: Proposal; reply?: string; output: string }> {
+    const result = await this.converse(
+      "Daedalus · planeación",
+      "Eres el agente conversacional y planificador de Daedalus. Responde en español. Para una pregunta, un saludo o si falta una decisión importante, devuelve kind=message, message con tu respuesta o una sola pregunta útil y omite por completo el campo proposal. No inventes un plan para un saludo. Si el usuario pide una propuesta y el objetivo ya es concreto y verificable, devuelve kind=proposal con al menos dos alternativas, crítica, recomendación y un plan ejecutable; no hagas preguntas innecesarias. TU sesión no implementa código, ejecuta herramientas ni aprueba ejecución. El campo proposal.prompt es una instrucción imperativa que Codex ejecutará DESPUÉS de la aprobación humana: debe ordenar implementar y verificar, no esperar otra aprobación ni volver a planear. El conector realiza los commits locales de integración; no los prohíbas como criterio global. Cada tarea tiene áreas relativas al proyecto, criterios verificables y dependencias sin ciclos. No inventes pruebas realizadas. Devuelve exclusivamente JSON válido con este esquema: " +
+        JSON.stringify(z.toJSONSchema(plannerReply)),
+      prompt,
+      directory,
+      signal,
+      onSession,
+      sessionId,
+    );
+    const output = result.parts
+      .filter((p) => p.type === "text")
+      .map((p) => p.text ?? "")
+      .join("\n");
+    // Validate locally: OpenCode 1.19.5 can fail to hydrate stored JSON-schema class instances.
+    return parsePlannerReply(output, result.info.structured);
+  }
+  async review(
+    prompt: string,
+    directory: string,
+    signal: AbortSignal,
+    onSession: (id: string) => Promise<void>,
+    sessionId?: string,
+  ): Promise<string> {
+    const result = await this.converse(
+      "Daedalus · revisión final",
+      "Eres el revisor final independiente de Daedalus. Responde en español. Evalúa el plan aprobado, los resultados y el diff integrado. Distingue las pruebas del ejecutor de la evidencia que puedes verificar en el contexto. Un diff truncado impide confirmar áreas omitidas. No ejecutes herramientas, no modifiques archivos ni concedas aprobaciones. Devuelve únicamente JSON con verdict=pass si se cumplen todos los criterios y no hay hallazgos bloqueantes, changes_requested si requiere correcciones o blocked si faltan pruebas o contexto para emitir un veredicto. El campo report contiene un informe Markdown con hallazgos, pruebas verificadas, limitaciones y veredicto. Esquema: " +
+        JSON.stringify(z.toJSONSchema(reviewReply)),
+      prompt,
+      directory,
+      signal,
+      onSession,
+      sessionId,
+    );
+    const output = result.parts
+      .filter((p) => p.type === "text")
+      .map((p) => p.text ?? "")
+      .join("\n")
+      .trim();
+    const text = output.replace(/^\s*```(?:json)?\s*([\s\S]*?)```\s*$/, "$1");
+    const review = reviewReply.parse(JSON.parse(text));
+    if (review.verdict !== "pass") throw new ExecutionOutcomeError(review.report);
+    return review.report;
   }
 }

@@ -13,6 +13,9 @@ import {
   type Session,
 } from "../src/shared/model";
 import { git } from "../src/connector/worktrees";
+import { loadConfig } from "../src/connector/config";
+
+const localConfig = await loadConfig(path.resolve("connector.local.json"));
 
 await mkdir(".daedalus/verification", { recursive: true });
 const directory = await mkdtemp(path.resolve(".daedalus/smoke-")),
@@ -24,16 +27,7 @@ await writeFile(
   "Proyecto aislado de verificación de Daedalus.\n",
 );
 await git(project, "add", "README.md");
-await git(
-  project,
-  "-c",
-  "user.name=Daedalus",
-  "-c",
-  "user.email=daedalus@localhost",
-  "commit",
-  "-m",
-  "Base de verificación",
-);
+await git(project, "commit", "-m", "⚙️ci: initialize isolated engine verification");
 let state = emptyWorkspace();
 const token = "ddl_" + crypto.randomUUID(),
   connectorId = crypto.randomUUID();
@@ -91,6 +85,12 @@ await writeFile(
     projects: [{ id: "smoke", name: "Verificación aislada", root: project }],
     skillsRoot: path.resolve(".daedalus/skills"),
     journalRoot: path.join(directory, "journal"),
+    opencodeUrl: localConfig.opencodeUrl,
+    opencodeModel: localConfig.opencodeModel,
+    opencodeVariant: localConfig.opencodeVariant,
+    opencodeAuthFile: localConfig.opencodeAuthFile,
+    codexCommand: localConfig.codexCommand,
+    planningFallback: "none",
   }),
 );
 const child = spawn(

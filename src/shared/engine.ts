@@ -345,6 +345,7 @@ export class Engine {
         (r) =>
           r.sessionId === s.id &&
           r.kind === "review" &&
+          !["failed", "cancelled"].includes(r.status) &&
           r.approvedVersion === currentVersion(s)?.version,
       )
     ) {
@@ -373,7 +374,11 @@ export class Engine {
         this.state.projects.some(
           (x) => x.id === r.projectId && x.connectorId === p.id,
         ) &&
-        (r.kind === "planning" ? (c.planning ?? c.opencode) : c.codex),
+        (r.kind === "planning"
+          ? (c.planning ?? c.opencode)
+          : r.kind === "review"
+            ? c.opencode
+            : c.codex),
     );
     if (!run) return null;
     if (run.kind !== "planning") {

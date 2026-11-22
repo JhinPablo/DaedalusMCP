@@ -47,7 +47,7 @@ it("continues only the same chat, project and provider after a connector restart
     ),
   ).toBeUndefined();
   expect(
-    previousPlanningSession(data, run, "OpenCode · DeepSeek V4.1 Flash Free"),
+    previousPlanningSession(data, run, "OpenCode · DeepSeek V4.1 Flash"),
   ).toBeUndefined();
 });
 it("does not continue or replace a conversation with an uncertain turn", () => {

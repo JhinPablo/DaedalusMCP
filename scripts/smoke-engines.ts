@@ -22,7 +22,7 @@ try {
 }
 const planner = new OpenCodeClient(
   process.env.DAEDALUS_OPENCODE_URL ?? "http://127.0.0.1:4096",
-  "deepseek-v4.1-flash-free",
+  process.env.DAEDALUS_OPENCODE_MODEL ?? "deepseek-v4.1-flash",
 );
 const plan = await planner.plan(
   'Prueba de integración de Daedalus. Planea una sola tarea que cree un archivo result.txt con el texto DAEDALUS_SMOKE_OK. No implementes nada. Compara dos enfoques para escribir el archivo, critica riesgos y devuelve exactamente una tarea sin dependencias, sin skills adicionales, con áreas ["result.txt"].',

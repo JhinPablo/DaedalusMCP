@@ -18,6 +18,7 @@
     "connector:install": "tsx scripts/runtime.ts install",
     "connector:update": "tsx scripts/runtime.ts update",
     "opencode:serve": "tsx scripts/opencode.ts",
+    "opencode:login": "tsx scripts/opencode.ts --login",
     "doctor": "tsx scripts/doctor.ts",
     "test:engines": "tsx scripts/smoke-engines.ts",
     "test:live": "tsx scripts/smoke-flow.ts",

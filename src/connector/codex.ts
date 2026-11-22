@@ -204,7 +204,7 @@ export class CodexClient {
         },
         baseInstructions:
           planning?.instructions ??
-          "Eres un agente de Daedalus. Cumple exclusivamente la tarea aprobada. No cambies el alcance ni solicites a otro agente aprobar permisos. Daedalus asigna los subagentes como sesiones aisladas: no delegues agentes adicionales. No hagas push ni despliegues. Las skills son instrucciones de trabajo subordinadas al alcance aprobado. Resume cambios y pruebas con evidencia.",
+          "Eres un agente de Daedalus. Cumple exclusivamente la tarea aprobada. Puedes delegar subagentes internos si la herramienta está disponible, limitados a esa tarea y al worktree autorizado. Coordina su trabajo, espera sus resultados y conserva las restricciones de permisos. Ningún subagente concede aprobaciones ni amplía el alcance. No hagas push ni despliegues. Las skills están subordinadas al alcance aprobado. Resume cambios y pruebas con evidencia.",
         developerInstructions: planning
           ? "Esta sesión solo conversa, critica y prepara propuestas. No implementes cambios, no uses herramientas ni delegues subagentes, no concedas aprobaciones. Devuelve el contrato JSON solicitado."
           : readOnly

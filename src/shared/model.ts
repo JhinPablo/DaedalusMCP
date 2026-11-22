@@ -1,5 +1,66 @@
 import { z } from "zod";
 
+export const usageWindowSchema = z.object({
+  status: z.string().min(1).max(40),
+  usedPercent: z.number().min(0).max(100),
+  remainingPercent: z.number().min(0).max(100),
+  resetsAt: z.string().min(1).max(80),
+});
+export const usageWindowsSchema = z.object({
+  rolling: usageWindowSchema,
+  weekly: usageWindowSchema,
+  monthly: usageWindowSchema,
+});
+export const usageLocalSchema = z.object({
+  sessions: z.number(),
+  prompts: z.number(),
+  cost: z.number(),
+  tokens: z.object({
+    input: z.number(),
+    output: z.number(),
+    reasoning: z.number(),
+    cacheRead: z.number(),
+  }),
+  models: z.array(
+    z.object({
+      id: z.string(),
+      providerID: z.string(),
+      variant: z.string().optional(),
+      steps: z.number(),
+      cost: z.number(),
+    }),
+  ),
+});
+export const usageSnapshotSchema = z.object({
+  connected: z.boolean(),
+  updatedAt: z.string().min(1).max(80),
+  lastAttemptAt: z.string().min(1).max(80),
+  error: z.string().max(2000).optional(),
+  windows: usageWindowsSchema.nullable(),
+  local: usageLocalSchema.optional(),
+});
+export type UsageWindow = z.infer<typeof usageWindowSchema>;
+export type UsageSnapshot = z.infer<typeof usageSnapshotSchema>;
+
+export const modelOptionSchema = z.object({
+  id: z.string().min(1).max(200),
+  providerID: z.string().min(1).max(100),
+  name: z.string().min(1).max(200),
+  variants: z.array(z.string().min(1).max(40)).max(12),
+  cost: z.object({ input: z.number(), output: z.number() }).optional(),
+});
+export type ModelOption = z.infer<typeof modelOptionSchema>;
+export interface EngineSelection {
+  model: string;
+  variant?: string;
+  updatedAt: string;
+  updatedBy?: string;
+}
+export const engineSelectionInput = z.object({
+  model: z.string().min(1).max(200),
+  variant: z.string().min(1).max(40).optional(),
+});
+
 export const taskInput = z.object({
   id: z.string().regex(/^[a-zA-Z0-9_-]{1,64}$/),
   title: z.string().min(1).max(200),
@@ -212,7 +273,10 @@ export interface ConnectorInfo {
   planning?: boolean;
   planningModel?: string;
   model?: string;
+  modelVariant?: string;
   error?: string;
+  usage?: UsageSnapshot;
+  models?: ModelOption[];
 }
 export interface Credential {
   id: string;
@@ -226,6 +290,7 @@ export interface Workspace {
   migrationId?: string;
   schemaVersion: 1;
   revision: number;
+  engines?: { opencode?: EngineSelection };
   projects: Project[];
   sessions: Session[];
   runs: AgentRun[];

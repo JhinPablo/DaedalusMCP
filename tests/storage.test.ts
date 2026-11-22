@@ -68,10 +68,19 @@ it("persiste únicamente las entidades modificadas y reconstruye Unicode grande"
       type: "test",
       message: "🛠️ Unicode ".repeat(15000),
     });
+    state.engines = {
+      opencode: {
+        model: "deepseek-v4.1-flash",
+        variant: "high",
+        updatedAt: new Date().toISOString(),
+        updatedBy: "owner",
+      },
+    };
     repo.write(state);
     const restored = new SqliteRepository(f.storage).read();
     expect(restored.events[0].message).toBe(state.events[0].message);
     expect(restored.projects).toEqual(state.projects);
+    expect(restored.engines).toEqual(state.engines);
   } finally {
     f.db.close();
   }

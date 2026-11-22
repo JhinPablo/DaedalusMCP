@@ -4,7 +4,9 @@
   "tokenEnv": "DAEDALUS_CONNECTOR_TOKEN",
   "codexCommand": "codex",
   "opencodeUrl": "http://127.0.0.1:4096",
-  "opencodeModel": "deepseek-v4.1-flash-free",
+  "opencodeModel": "deepseek-v4.1-flash",
+  "opencodeVariant": "high",
+  "opencodeAuthFile": ".daedalus/opencode/data/opencode/auth.json",
   "planningFallback": "none",
   "projects": [
     {

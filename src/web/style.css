@@ -1305,6 +1305,93 @@ small {
   margin-top: 15px;
   font-size: 11px;
 }
+.usage-panel {
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px solid var(--rule);
+}
+.usage-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+.usage-state {
+  font-size: 11px;
+  color: var(--muted);
+}
+.usage-state.ok {
+  color: var(--positive);
+}
+.usage-state.warn {
+  color: var(--negative);
+}
+.usage-windows {
+  display: grid;
+  gap: 12px;
+}
+.usage-window-head {
+  display: flex;
+  justify-content: space-between;
+  font-size: 11px;
+}
+.usage-bar {
+  height: 6px;
+  background: var(--raised);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  overflow: hidden;
+  margin: 6px 0;
+}
+.usage-bar > span {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+  border-radius: inherit;
+  transition: width 0.3s;
+}
+.usage-window small {
+  display: block;
+  font-size: 10px;
+  color: var(--muted);
+}
+.usage-panel > small {
+  display: block;
+  margin-top: 8px;
+  font-size: 11px;
+  color: var(--muted);
+}
+.engine-form {
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid var(--rule);
+  display: grid;
+  gap: 10px;
+}
+.engine-form label {
+  font-size: 11px;
+  color: var(--muted);
+  display: grid;
+  gap: 5px;
+}
+.engine-form select {
+  min-height: 30px;
+  padding: 4px 8px;
+  border: 1px solid var(--control);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--text);
+  font-size: 12px;
+}
+.engine-form button {
+  justify-self: start;
+  font-size: 12px;
+  min-height: 30px;
+}
+.engine-form small {
+  font-size: 10px;
+  color: var(--muted);
+}
 .setup-steps {
   margin: 0;
   padding-left: 20px;
@@ -2029,4 +2116,13 @@ small {
     top: 16px;
     color: var(--accent);
   }
+}
+.usage-indicator {
+  border: 1px solid var(--control);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--text);
+  padding: 5px 8px;
+  white-space: nowrap;
+  font-size: 12px;
 }
